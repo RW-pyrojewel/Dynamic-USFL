@@ -77,14 +77,41 @@ logging:
   scale_csv: scales.csv
 
 privacy:
-  # offline profiling 阶段你可以先不跑攻击（enabled=false），但把 aux 配好以便后续复用
-  enabled: false
+  enable: true
   aux_dataset:
-    name: cifar10
-    # 建议：aux 用 CIFAR-10 的“公开子集”，与 victim 训练数据做去重/不交叠
+    name: cinic10
+    root: ./data/Derm7pt_release_v0
     split: train
-    batch_size: 128
     num_workers: 4
+    max_samples: 5000           # 每个 cut 最多采样多少个样本
+    store_x: true               # 是否同时保存原始图像 x（MIA 需要）
+  sae:                          # SAE-SL 攻击器配置
+    enable_lia: true
+    enable_mia: true
+    weight_lia: 0.5             # P_global = w_l * P_label + w_s * P_sample
+    weight_mia: 0.5
+    lambda_lia: 1.0             # 多任务训练中的 CE 权重
+    lambda_mia: 1.0             # 多任务训练中的重建损失权重
+    lia_algorithm: mix-match
+    force_retrain: false
+    epochs: 20
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
+    mixmatch:
+      T: 0.5
+      alpha: 0.75
+      lambda_u: 75.0
+      use_augmentation: true   # 如需更贴 Fu 的 “customized no-aug”，设 false
+    patience: 5
+    lia_hidden_dim: 256
+    lia_dropout: 0.0
+    attacker_ckpt_dir: ./checkpoints/privacy/sae
+    decoder_channel_min: 32
+    decoder_out_act: sigmoid
+  metrics:
+    lia_to_priv: auc_identity   # 先用 P_label = AUC
+    mia_metric: mse             # 重建质量指标类型：mse / psnr / ssim（先用 mse）
+    mia_scale: 1.0              # 将质量映射到 [0,1] 时的缩放，先占位
 
 objective:
   acc_mode: final

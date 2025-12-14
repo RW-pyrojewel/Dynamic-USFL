@@ -315,8 +315,24 @@ def evaluate_lia_attack(
     Output P_label using cfg.metrics mapping (default: identity on AUC).
     """
     attacker.eval()
-    logits, _ = attacker.forward_victim(victim_batch.A_front.to(device))
-    prob = F.softmax(logits, dim=1).detach().cpu().numpy()
+
+    # evaluate in chunks to avoid allocating huge intermediate tensors
+    N = victim_batch.num_samples
+    # prefer aux batch size as a hint, cap to a reasonable size
+    try:
+        hint_bs = int(priv_cfg.aux.batch_size)
+    except Exception:
+        hint_bs = 64
+    eval_bs = max(1, min(hint_bs, 64))
+
+    logits_list = []
+    for i in range(0, N, eval_bs):
+        chunk = victim_batch.A_front[i : i + eval_bs].to(device)
+        logits_chunk, _ = attacker.forward_victim(chunk)
+        logits_list.append(logits_chunk.detach().cpu())
+
+    logits = torch.cat(logits_list, dim=0)
+    prob = F.softmax(logits, dim=1).numpy()
     y_true = victim_batch.y.detach().cpu().numpy()
     y_pred = prob.argmax(axis=1)
 
@@ -342,9 +358,30 @@ def evaluate_mia_attack(
         return MIAEval(mse=float("nan"), P_sample=0.0)
 
     attacker.eval()
-    _, x_hat = attacker.forward_victim(victim_batch.A_front.to(device))
+
+    # compute reconstruction in chunks to avoid OOM
+    N = victim_batch.num_samples
+    try:
+        hint_bs = int(priv_cfg.aux.batch_size)
+    except Exception:
+        hint_bs = 64
+    eval_bs = max(1, min(hint_bs, 64))
+
+    total_se = 0.0
+    total_elems = 0
     x_true = victim_batch.x.to(device)
 
-    mse = float(F.mse_loss(x_hat, x_true).item())
+    for i in range(0, N, eval_bs):
+        chunk_A = victim_batch.A_front[i : i + eval_bs].to(device)
+        _, x_hat_chunk = attacker.forward_victim(chunk_A)
+        x_true_chunk = x_true[i : i + eval_bs]
+
+        # sum of squared errors for this chunk
+        se = F.mse_loss(x_hat_chunk, x_true_chunk, reduction="sum").item()
+        total_se += float(se)
+        total_elems += int(x_true_chunk.numel())
+
+    # mean mse over all elements
+    mse = float(total_se / max(1, total_elems))
     P_sample = mia_quality_to_privacy(mse, priv_cfg)
     return MIAEval(mse=mse, P_sample=P_sample)

@@ -93,10 +93,11 @@ def train_static_usfl(
     # ------------------------------
     privacy_cfg = getattr(cfg, "privacy", None)
     privacy_enabled = bool(getattr(privacy_cfg, "enable", False)) if privacy_cfg is not None else False
+    privacy_aux = getattr(privacy_cfg, "aux_dataset", None) if privacy_cfg is not None else None
 
     if privacy_enabled:
-        max_priv_samples = int(getattr(privacy_cfg, "max_samples", 5000))
-        store_x = bool(getattr(privacy_cfg, "store_x", True))
+        max_priv_samples = int(getattr(privacy_aux, "max_samples", 5000)) if privacy_aux is not None else 5000
+        store_x = bool(getattr(privacy_aux, "store_x", True)) if privacy_aux is not None else True
         priv_A_front_buf: list[torch.Tensor] = []
         priv_y_buf: list[torch.Tensor] = []
         priv_x_buf: Optional[list[torch.Tensor]] = [] if store_x else None
