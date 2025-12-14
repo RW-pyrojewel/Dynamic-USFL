@@ -32,7 +32,7 @@ def main():
 
     args = parser.parse_args()
 
-    # 1. load config
+    # 0. load config
     overrides = parse_overrides(args.override) if args.override else None
     cfg = load_config(args.config, overrides=overrides)
     exp_name = cfg.experiment.name
@@ -41,6 +41,9 @@ def main():
 
     frontend_cut_range = cfg.usfl.split.frontend_cut_range
     backend_cut_range = cfg.usfl.split.backend_cut_range
+
+    seed = cfg.seed
+    set_seed(seed)
 
     # ---------- 全局容器 ----------
     cut_pairs: List[Tuple[int, int]] = []
@@ -57,7 +60,7 @@ def main():
 
     # -------------------------------
     # 阶段一：逐 cut 训练（只跑 train，不算 J）
-    # -------------------------------
+    # -------------------------------            
     for cut1 in range(frontend_cut_range[0], frontend_cut_range[1] + 1):
         for cut2 in range(backend_cut_range[0], backend_cut_range[1] + 1):
             if cut2 <= cut1:
@@ -66,10 +69,6 @@ def main():
             cut_pairs.append((cut1, cut2))
             cut_key = f"cut_{cut1}_{cut2}"
             cut_dir_name = cut_key
-
-            # 1.1 set seed
-            seed = getattr(cfg, "seed", 42)
-            set_seed(seed)
 
             # 1.2 build dataloaders
             train_loader, val_loader = build_dataloaders(cfg)
