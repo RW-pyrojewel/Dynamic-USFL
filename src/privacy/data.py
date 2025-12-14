@@ -40,8 +40,19 @@ def build_aux_loader(cfg, priv_cfg: PrivacyConfig) -> DataLoader:
             shuffle=True,
         )
         return loader
+    if name == "cinic10":
+        from src.data.cinic10 import build_cinic10_dataloader
 
-    # TODO: 支持 CIFAR 等其它辅助数据集
+        loader = build_cinic10_dataloader(
+            root=priv_cfg.aux.root,
+            split=priv_cfg.aux.split,
+            img_size=getattr(cfg.data, "img_size", 32) if hasattr(cfg, "data") else 32,
+            batch_size=priv_cfg.aux.batch_size,
+            num_workers=priv_cfg.aux.num_workers,
+            shuffle=True,
+        )
+        return loader
+
     raise NotImplementedError(f"Aux dataset '{name}' is not implemented in privacy.data.")
 
 

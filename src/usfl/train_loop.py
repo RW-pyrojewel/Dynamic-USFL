@@ -302,7 +302,7 @@ def train_static_usfl(
                     os.path.join(ckpt_dir, f"ckpt_epoch_{epoch}.pth"),
                 )
                 print(
-                    f"[ckpt] New best backbone saved at epoch {epoch}"
+                    f"[ckpt] New backbone saved at epoch {epoch}"
                 )
 
         backbone.to("cpu")

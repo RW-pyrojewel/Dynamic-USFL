@@ -2,6 +2,7 @@
 from .ham10000 import build_ham10000_dataloaders, HAM10000Dataset
 from .cifar10 import build_cifar10_dataloaders
 from .derm7pt import build_derm7pt_dataloader, Derm7ptDataset
+from .cinic10 import build_cinic10_dataloader
 from .data_distribution import create_client_loaders
 
 __all__ = [
@@ -10,5 +11,6 @@ __all__ = [
     "build_cifar10_dataloaders",
     "Derm7ptDataset",
     "build_derm7pt_dataloader",
+    "build_cinic10_dataloader",
     "create_client_loaders",
 ]

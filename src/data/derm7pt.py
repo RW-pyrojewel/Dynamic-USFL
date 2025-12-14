@@ -3,10 +3,9 @@
 import os
 import csv
 from collections import Counter
-from typing import Optional, Sequence, Tuple, List, Set
+from typing import Optional, Tuple, List, Set
 
 from PIL import Image
-import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 

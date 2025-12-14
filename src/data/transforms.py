@@ -24,6 +24,9 @@ def build_transforms(cfg) -> Tuple[transforms.Compose, transforms.Compose]:
 
     # Simple augmentations
     if aug is not None:
+        if getattr(aug, "random_crop", False):
+            padding = getattr(aug, "random_crop_padding", 4)
+            train_tfms.append(transforms.RandomCrop(img_size, padding=padding))
         if getattr(aug, "random_horizontal_flip", False):
             train_tfms.append(transforms.RandomHorizontalFlip())
         if getattr(aug, "random_vertical_flip", False):

@@ -36,7 +36,7 @@ usfl:
 
 training:
   device: cuda
-  epochs: 200
+  epochs: 100
   mixed_precision: true          # 混合精度训练，用 torch.cuda.amp 可以减一点通信时间
   grad_clip: 5.0                 # 0 或 None 表示不裁剪
   eval_every: 1                  # 每多少个 epoch 跑一次验证
