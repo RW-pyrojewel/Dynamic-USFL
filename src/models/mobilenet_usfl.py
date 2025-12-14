@@ -17,7 +17,14 @@ class MobileNetV2USFLBackbone(USFLBackbone):
         base = models.mobilenet_v2(pretrained=pretrained)
 
         features = list(base.features.children())
-        classifier = nn.Sequential(nn.Dropout(0.2), nn.Linear(1280, num_classes))
+        # 原始 MobileNet 在 classifier 前有全局平均池化与展平操作，
+        # 这里补回 AdaptiveAvgPool2d + Flatten，以确保 Linear 收到形状 (N, 1280)
+        classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Dropout(0.2),
+            nn.Linear(1280, num_classes),
+        )
 
         # 按照 MobileNetV2 的结构划分为若干块
         self.layers = nn.ModuleList()
