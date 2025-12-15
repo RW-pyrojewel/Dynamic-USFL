@@ -42,8 +42,9 @@ def evaluate_privacy_for_cut(
 
     Assumptions:
       - cut_dir/privacy_samples.pt exists and contains: A_front, y, and optionally x
-      - attacker is trained on auxiliary raw samples (x_aux, y_aux) only
-      - victim A_front is used only at evaluation time (as latent Z)
+      - attacker is trained with labeled aux raw samples (x_aux, y_aux)
+      - victim A_front is used as unlabeled pool during attacker training (latent-space MixMatch)
+      - victim A_front is also used at evaluation time (as latent Z)
     """
     priv_cfg: PrivacyConfig = get_privacy_cfg(cfg)
     if not priv_cfg.enabled:

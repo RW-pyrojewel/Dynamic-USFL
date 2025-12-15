@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Tuple, Iterator
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, TensorDataset
 from tqdm import trange
 
 from src.models.model_usfl import USFLBackbone
@@ -47,32 +47,48 @@ def _infer_img_shape_from_cfg(cfg) -> Tuple[int, int, int]:
     return c, h, w
 
 
-def _split_aux_dataset(aux_loader: DataLoader, labeled_fraction: float, seed: int = 0) -> Tuple[DataLoader, DataLoader]:
+def _create_labeled_loader(
+    cfg,
+    priv_cfg: PrivacyConfig,
+    aux_loader: DataLoader,
+    victim_batch: VictimBatch,
+    z_victim_cpu: torch.Tensor,
+) -> DataLoader:
     """
-    Create two loaders (labeled, unlabeled) from the given aux_loader.dataset.
-    We only need (x, y) from labeled; unlabeled uses x only.
+    Labeled pool from aux, sized relative to victim pool:
+      rho = |L| / (|L| + |U|)  =>  |L| = |U| * rho / (1 - rho)
+    where U is victim pool size (A_front count), L is labeled aux pool size.
+
+    NOTE:
+      This redefines `mixmatch.labeled_fraction` as rho above (overall labeled fraction),
+      not "fraction of aux treated as labeled".
     """
-    ds = aux_loader.dataset
-    n = len(ds)
-    rng = np.random.RandomState(seed)
-    idx = np.arange(n)
-    rng.shuffle(idx)
+    rho = float(priv_cfg.sae.mixmatch.labeled_fraction)
+    eps = 1e-6
+    rho = min(max(rho, eps), 1.0 - eps)  # avoid division by zero
 
-    n_l = max(1, int(round(n * labeled_fraction)))
-    labeled_idx = idx[:n_l].tolist()
-    unlabeled_idx = idx[n_l:].tolist()
+    U = int(getattr(victim_batch, "num_samples", int(z_victim_cpu.size(0))))
+    desired_L = int(round(U * rho / (1.0 - rho)))
 
-    # keep batch size same
-    common_kwargs = dict(
-        batch_size=aux_loader.batch_size,
-        num_workers=aux_loader.num_workers,
-        pin_memory=getattr(aux_loader, "pin_memory", False),
-        drop_last=True,
-    )
+    aux_ds = aux_loader.dataset
+    aux_n = len(aux_ds)
+    desired_L = max(1, min(desired_L, aux_n))
 
-    labeled_loader = DataLoader(Subset(ds, labeled_idx), shuffle=True, **common_kwargs)
-    unlabeled_loader = DataLoader(Subset(ds, unlabeled_idx), shuffle=True, **common_kwargs)
-    return labeled_loader, unlabeled_loader
+    if desired_L >= aux_n:
+        labeled_loader = aux_loader
+    else:
+        g = torch.Generator()
+        g.manual_seed(int(getattr(cfg, "seed", 0)))
+        idx = torch.randperm(aux_n, generator=g)[:desired_L].tolist()
+        labeled_loader = DataLoader(
+            Subset(aux_ds, idx),
+            batch_size=aux_loader.batch_size,
+            shuffle=True,
+            num_workers=aux_loader.num_workers,
+            pin_memory=getattr(aux_loader, "pin_memory", False),
+            drop_last=False,
+        )
+    return labeled_loader
 
 
 def _sharpen(p: torch.Tensor, T: float) -> torch.Tensor:
@@ -90,7 +106,13 @@ def _onehot(y: torch.Tensor, num_classes: int) -> torch.Tensor:
     return F.one_hot(y, num_classes=num_classes).float()
 
 
-def _mixup(x1: torch.Tensor, y1: torch.Tensor, x2: torch.Tensor, y2: torch.Tensor, alpha: float) -> Tuple[torch.Tensor, torch.Tensor]:
+def _mixup(
+    x1: torch.Tensor,
+    y1: torch.Tensor,
+    x2: torch.Tensor,
+    y2: torch.Tensor,
+    alpha: float
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     MixUp with Beta(alpha, alpha).
     """
@@ -102,6 +124,49 @@ def _mixup(x1: torch.Tensor, y1: torch.Tensor, x2: torch.Tensor, y2: torch.Tenso
     x = lam_t * x1 + (1.0 - lam_t) * x2
     y = lam_t * y1 + (1.0 - lam_t) * y2
     return x, y
+
+
+def _next_victim_z_cpu(victim_loader: DataLoader, victim_iter: Iterator) -> Tuple[torch.Tensor, Iterator]:
+    try:
+        (z_,) = next(victim_iter)
+    except StopIteration:
+        victim_iter = iter(victim_loader)
+        (z_,) = next(victim_iter)
+    return z_, victim_iter
+
+
+def _covariance(feat: torch.Tensor) -> torch.Tensor:
+    """
+    feat: [B, C]
+    returns: [C, C] covariance
+    """
+    if feat.dim() != 2:
+        raise ValueError(f"Expected [B,C] features, got {tuple(feat.shape)}")
+    b = feat.size(0)
+    if b <= 1:
+        # avoid NaNs; return zeros
+        return torch.zeros(feat.size(1), feat.size(1), device=feat.device, dtype=feat.dtype)
+    x = feat - feat.mean(dim=0, keepdim=True)
+    return (x.t() @ x) / (b - 1)
+
+
+def _latent_align_loss(z_l: torch.Tensor, z_u: torch.Tensor) -> torch.Tensor:
+    """
+    Very light latent alignment regularizer between:
+      - z_l = ShadowEncoder(x_aux) (trainable)
+      - z_u = victim A_front (constant)
+    Uses:
+      - mean alignment (MSE of channel means)
+      - CORAL (covariance alignment) on GAP features
+
+    Both are computed on f = GAP(z) -> [B, C] to keep it lightweight.
+    """
+    f_l = F.adaptive_avg_pool2d(z_l, (1, 1)).flatten(1)
+    f_u = F.adaptive_avg_pool2d(z_u, (1, 1)).flatten(1)
+
+    mean_loss = F.mse_loss(f_l.mean(dim=0), f_u.mean(dim=0))
+    cov_loss = F.mse_loss(_covariance(f_l), _covariance(f_u))
+    return mean_loss + cov_loss
 
 
 def build_attacker_for_cut(
@@ -129,10 +194,11 @@ def build_attacker_for_cut(
         dropout=priv_cfg.sae.lia_dropout,
     ).to(device)
 
-    decoder = MirrorDecoder(
+    # STRICT mirror decoder: traced from encoder.front with dummy forward
+    decoder = MirrorDecoder.from_encoder(
+        encoder_front=encoder.front,
         z_spec=z_spec,
         img_shape=img_shape,
-        channel_min=priv_cfg.sae.decoder_channel_min,
         out_act=priv_cfg.sae.decoder_out_act,
     ).to(device)
 
@@ -150,16 +216,15 @@ def train_or_load_sae_attacker(
     device: str,
 ) -> SAESLAttacker:
     """
-    Train SAE-SL attacker on auxiliary raw samples (x_aux, y_aux), using MixMatch for LIA
-    (Fu Sec. 3.3) and reconstruction loss for MIA (AutoEncoderNN style).
-
-    Checkpoint is per cut_key.
+    Train SAE-SL attacker with labeled auxiliary raw samples (x_aux, y_aux) and
+    unlabeled victim smashed activations A_front (latent-space MixMatch) for LIA.
+    MIA reconstruction is trained on aux labeled only; victim latents NEVER participate in MIA.
     """
     output_dir = os.path.join(cfg.experiment.output_dir)
     cut_dir = os.path.join(output_dir, cut_key)
     if os.path.exists(cut_dir):
         output_dir = cut_dir
-    ckpt_path = os.path.join(output_dir, "checkpoints", f"sae_attacker.pth")
+    ckpt_path = os.path.join(output_dir, "checkpoints", "sae_attacker.pth")
 
     attacker = build_attacker_for_cut(cfg, priv_cfg, backbone_template, cut1, victim_batch, device)
 
@@ -168,13 +233,26 @@ def train_or_load_sae_attacker(
         attacker.load_state_dict(state["model"])
         return attacker
 
-    # Split aux into labeled/unlabeled pools for MixMatch
-    labeled_loader, unlabeled_loader = _split_aux_dataset(
-        aux_loader,
-        labeled_fraction=priv_cfg.sae.mixmatch.labeled_fraction,
-        seed=int(getattr(cfg, "seed", 0)),
+    # Unlabeled pool from victim smashed activations A_front (latent Z)
+    # NOTE: Do NOT use victim labels during training.
+    z_victim_cpu = victim_batch.A_front.detach().cpu()
+    victim_bs = int(getattr(aux_loader, "batch_size", 32))
+    victim_bs = max(1, min(victim_bs, int(z_victim_cpu.size(0))))
+    victim_loader = DataLoader(
+        TensorDataset(z_victim_cpu),
+        batch_size=victim_bs,
+        shuffle=True,
+        num_workers=0,
+        pin_memory=False,
+        drop_last=False,
     )
-    unlabeled_iter = iter(unlabeled_loader)
+    victim_iter = iter(victim_loader)
+
+    # Labeled pool from aux dataset (subsampled by rho rule)
+    labeled_loader = _create_labeled_loader(cfg, priv_cfg, aux_loader, victim_batch, z_victim_cpu)
+
+    # step-driven: ensure each epoch has enough optimization steps
+    steps_per_epoch = max(1, max(len(labeled_loader), len(victim_loader)))
 
     opt = torch.optim.Adam(
         attacker.parameters(),
@@ -190,62 +268,80 @@ def train_or_load_sae_attacker(
     T = priv_cfg.sae.mixmatch.T
     alpha = priv_cfg.sae.mixmatch.alpha
     lambda_u = priv_cfg.sae.mixmatch.lambda_u
+    lambda_align = float(getattr(priv_cfg.sae, "lambda_align", 0.0))
 
     for epoch in trange(priv_cfg.sae.epochs, desc=f"[privacy] Train attacker {cut_key}", leave=False):
         attacker.train()
         epoch_loss = 0.0
         n_seen = 0
 
-        for x_l, y_l in labeled_loader:
-            # fetch unlabeled batch
+        labeled_iter = iter(labeled_loader)
+        for _ in range(steps_per_epoch):
+            # cycle labeled
             try:
-                x_u, _ = next(unlabeled_iter)
+                x_l, y_l = next(labeled_iter)
             except StopIteration:
-                unlabeled_iter = iter(unlabeled_loader)
-                x_u, _ = next(unlabeled_iter)
+                labeled_iter = iter(labeled_loader)
+                x_l, y_l = next(labeled_iter)
+
+            # fetch victim unlabeled latents (latent Z) and align batch size to x_l
+            target_bs = int(x_l.size(0))
+            z_chunks = []
+            got = 0
+            while got < target_bs:
+                z_part, victim_iter = _next_victim_z_cpu(victim_loader, victim_iter)
+                z_chunks.append(z_part)
+                got += int(z_part.size(0))
+            z_u = torch.cat(z_chunks, dim=0)[:target_bs]
 
             x_l = x_l.to(device, non_blocking=True)
             y_l = y_l.to(device, non_blocking=True)
-            x_u = x_u.to(device, non_blocking=True)
+            z_u = z_u.to(device, non_blocking=True)
 
-            # ---- MixMatch pseudo-label for unlabeled ----
+            # ---- encode labeled aux into latent ----
+            z_l = attacker.encoder(x_l)
+
+            # ---- very light latent alignment regularizer (encoder-only) ----
+            loss_align = 0.0
+            if lambda_align > 0:
+                loss_align = _latent_align_loss(z_l, z_u)
+
+            # ---- MixMatch pseudo-label for victim unlabeled latents ----
             with torch.no_grad():
-                # customized MixMatch can be "no augmentation": use x_u directly
-                # We still average two forward passes for stability (K=2).
-                logits_u1, _, _ = attacker.forward_aux(x_u)
-                logits_u2, _, _ = attacker.forward_aux(x_u)
+                logits_u1, _ = attacker.forward_latent(z_u)
+                logits_u2, _ = attacker.forward_latent(z_u)
                 p_u = (F.softmax(logits_u1, dim=1) + F.softmax(logits_u2, dim=1)) / 2.0
                 q_u = _sharpen(p_u, T)
 
             # labeled one-hot
             y_l_oh = _onehot(y_l, num_classes)
 
-            # concat for mixup
-            x_all = torch.cat([x_l, x_u], dim=0)
+            # concat for mixup (latent-space)
+            z_all = torch.cat([z_l, z_u], dim=0)
             y_all = torch.cat([y_l_oh, q_u], dim=0)
 
             # shuffle pair for mixup
-            perm = torch.randperm(x_all.size(0), device=device)
-            x2 = x_all[perm]
+            perm = torch.randperm(z_all.size(0), device=device)
+            z2 = z_all[perm]
             y2 = y_all[perm]
 
-            x_mix, y_mix = _mixup(x_all, y_all, x2, y2, alpha=alpha)
+            z_mix, y_mix = _mixup(z_all, y_all, z2, y2, alpha=alpha)
 
             # split back
-            x_l_mix = x_mix[: x_l.size(0)]
-            y_l_mix = y_mix[: x_l.size(0)]
-            x_u_mix = x_mix[x_l.size(0) :]
-            y_u_mix = y_mix[x_l.size(0) :]
+            z_l_mix = z_mix[: z_l.size(0)]
+            y_l_mix = y_mix[: z_l.size(0)]
+            z_u_mix = z_mix[z_l.size(0):]
+            y_u_mix = y_mix[z_l.size(0):]
 
-            # ---- forward on mixed batches ----
+            # ---- forward on mixed latents ----
             opt.zero_grad()
 
             # labeled branch
-            logits_l, xhat_l, _ = attacker.forward_aux(x_l_mix)
-            # unlabeled branch
-            logits_u, xhat_u, _ = attacker.forward_aux(x_u_mix)
+            logits_l, _ = attacker.forward_latent(z_l_mix)
+            # unlabeled branch (victim latents)
+            logits_u, _ = attacker.forward_latent(z_u_mix)
 
-            # supervised loss Lx (cross-entropy with soft labels)
+            # supervised loss Lx
             logp_l = F.log_softmax(logits_l, dim=1)
             Lx = -(y_l_mix * logp_l).sum(dim=1).mean()
 
@@ -255,15 +351,18 @@ def train_or_load_sae_attacker(
 
             loss_lia = Lx + lambda_u * Lu
 
-            # reconstruction loss (both labeled/unlabeled mixed)
+            # reconstruction loss (aux labeled only) -- victim latents NEVER used here
             loss_rec = 0.0
             if priv_cfg.sae.enable_mia:
-                # use original images as targets (mixup already mixes images; target is mixed image)
-                loss_rec = F.mse_loss(xhat_l, x_l_mix) + F.mse_loss(xhat_u, x_u_mix)
+                # decoder-only forward to avoid MIA gradients affecting label_head
+                xhat_l = attacker.decoder(z_l)
+                loss_rec = F.mse_loss(xhat_l, x_l)
 
             loss = 0.0
             if priv_cfg.sae.enable_lia:
                 loss = loss + priv_cfg.sae.lambda_lia * loss_lia
+            if lambda_align > 0:
+                loss = loss + lambda_align * loss_align
             if priv_cfg.sae.enable_mia:
                 loss = loss + priv_cfg.sae.lambda_rec * loss_rec
 
@@ -287,6 +386,8 @@ def train_or_load_sae_attacker(
 
     if best_state is None:
         best_state = {"model": attacker.state_dict(), "epoch": priv_cfg.sae.epochs, "loss": float("nan")}
+
+    os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
     torch.save(best_state, ckpt_path)
     attacker.load_state_dict(best_state["model"])
     return attacker
@@ -300,7 +401,6 @@ def _compute_multiclass_auc(y_true: np.ndarray, prob: np.ndarray, multi_class: s
         from sklearn.metrics import roc_auc_score
         return float(roc_auc_score(y_true, prob, multi_class=multi_class))
     except Exception:
-        # fallback: return accuracy-like proxy
         y_pred = prob.argmax(axis=1)
         return float((y_pred == y_true).mean())
 
@@ -319,9 +419,7 @@ def evaluate_lia_attack(
     """
     attacker.eval()
 
-    # evaluate in chunks to avoid allocating huge intermediate tensors
     N = victim_batch.num_samples
-    # prefer aux batch size as a hint, cap to a reasonable size
     try:
         hint_bs = int(priv_cfg.aux.batch_size)
     except Exception:
@@ -330,7 +428,7 @@ def evaluate_lia_attack(
 
     logits_list = []
     for i in range(0, N, eval_bs):
-        chunk = victim_batch.A_front[i : i + eval_bs].to(device)
+        chunk = victim_batch.A_front[i: i + eval_bs].to(device)
         logits_chunk, _ = attacker.forward_victim(chunk)
         logits_list.append(logits_chunk.detach().cpu())
 
@@ -362,7 +460,6 @@ def evaluate_mia_attack(
 
     attacker.eval()
 
-    # compute reconstruction in chunks to avoid OOM
     N = victim_batch.num_samples
     try:
         hint_bs = int(priv_cfg.aux.batch_size)
@@ -375,16 +472,14 @@ def evaluate_mia_attack(
     x_true = victim_batch.x.to(device)
 
     for i in range(0, N, eval_bs):
-        chunk_A = victim_batch.A_front[i : i + eval_bs].to(device)
+        chunk_A = victim_batch.A_front[i: i + eval_bs].to(device)
         _, x_hat_chunk = attacker.forward_victim(chunk_A)
-        x_true_chunk = x_true[i : i + eval_bs]
+        x_true_chunk = x_true[i: i + eval_bs]
 
-        # sum of squared errors for this chunk
         se = F.mse_loss(x_hat_chunk, x_true_chunk, reduction="sum").item()
         total_se += float(se)
         total_elems += int(x_true_chunk.numel())
 
-    # mean mse over all elements
     mse = float(total_se / max(1, total_elems))
     P_sample = mia_quality_to_privacy(mse, priv_cfg)
     return MIAEval(mse=mse, P_sample=P_sample)

@@ -139,7 +139,7 @@ def get_privacy_cfg(cfg) -> PrivacyConfig:
         lia_dropout=float(_get(sae_ns, "lia_dropout", 0.0)),
         decoder_channel_min=int(_get(sae_ns, "decoder_channel_min", 32)),
         decoder_out_act=str(_get(sae_ns, "decoder_out_act", "sigmoid")),
-        save_attacker_ckpt=str(_get(sae_ns, "save_attacker_ckpt", True)),
+        save_attacker_ckpt=bool(_get(sae_ns, "save_attacker_ckpt", True)),
     )
 
     metrics = MetricsConfig(
