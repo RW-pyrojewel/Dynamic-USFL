@@ -2,7 +2,7 @@
 import csv
 import json
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -118,7 +118,7 @@ def _load_train_totals(train_csv: str) -> Dict[str, float]:
 
 def _load_scales(scale_csv: str) -> Dict[str, float]:
     """
-    从 scales.csv 中加载通信量和计算时间的 min/max。
+    从 scales.csv 中加载通信量和计算时间的缩放尺度。
     """
     if not os.path.isfile(scale_csv):
         raise FileNotFoundError(f"Scale metrics file not found: {scale_csv}")
@@ -156,6 +156,43 @@ def count_total_latency(cfg, cut_keys: List[str]) -> Dict[str, List[float]]:
         raise RuntimeError("No comm/comp totals collected. Check logging and train loop.")
 
     return {"comm_totals": comm_totals, "comp_totals": comp_totals}
+
+
+def count_per_epoch_latency_scale(cfg, cut_keys: List[str]) -> Dict[str, float]:
+    """
+    计算所有 cut 下每轮通信时延和计算时延的尺度。
+    """
+    epochs = getattr(cfg.training, "epochs", 1) if hasattr(cfg, "training") else 1
+    comm_epoch: Dict[Tuple[str, int], float] = {(cut_key, epoch): 0.0 for cut_key in cut_keys for epoch in range(1, epochs + 1)}
+    comp_epoch: Dict[Tuple[str, int], float] = {(cut_key, epoch): 0.0 for cut_key in cut_keys for epoch in range(1, epochs + 1)}
+    
+    for cut_key in cut_keys:
+        paths = _resolve_log_paths(cfg, cut_dir=cut_key)
+        train_csv = paths["train_csv"]
+
+        if not os.path.isfile(train_csv):
+            raise FileNotFoundError(f"Train metrics file not found: {train_csv}")
+
+        with open(train_csv, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                try:
+                    epoch = int(row.get("epoch", 1))
+                except (TypeError, ValueError):
+                    epoch = 1
+                try:
+                    comm = float(row.get("comm_time", 0.0))
+                except (TypeError, ValueError):
+                    comm = 0.0
+                try:
+                    comp = float(row.get("comp_time", 0.0))
+                except (TypeError, ValueError):
+                    comp = 0.0
+
+                comm_epoch[(cut_key, epoch)] += comm
+                comp_epoch[(cut_key, epoch)] += comp
+
+        return {"comm_scale": max(comm_epoch.values()), "comp_scale": max(comp_epoch.values())}
 
 
 def compute_final_objective(

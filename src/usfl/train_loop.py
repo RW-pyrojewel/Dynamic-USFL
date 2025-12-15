@@ -19,7 +19,7 @@ from src.models.model_usfl import USFLBackbone
 from src.data.data_distribution import create_client_loaders
 from src.network.simulator import build_network_simulator
 from src.usfl.aggregation import aggregate
-from src.usfl.static_split import StaticSplitUSFL
+from src.usfl.u_shaped_split import USFLOrchestrator
 
 
 def build_optimizer(cfg, params):
@@ -170,7 +170,7 @@ def train_static_usfl(
             client_model.to(device)
             client_model.train()
 
-            orchestrator = StaticSplitUSFL(
+            orchestrator = USFLOrchestrator(
                 backbone=client_model,
                 cut1=cut1,
                 cut2=cut2,

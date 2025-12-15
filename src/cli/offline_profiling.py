@@ -10,7 +10,7 @@ from src.privacy.api import PrivacyResult, evaluate_privacy_for_cut
 from src.usfl.train_loop import train_static_usfl
 
 from src.metrics.logger import MetricsLogger
-from src.metrics.objectives import compute_final_objective, count_total_latency
+from src.metrics.objectives import compute_final_objective, count_per_epoch_latency_scale, count_total_latency
 from src.utils.builder import build_backbone, build_dataloaders
 from src.utils.seed import set_seed
 
@@ -207,14 +207,23 @@ def main():
     print("\n=============================\n")
     print(f"The optimal cut points are {best_cut_key} with J = {best_J:.4f}")
 
-    # 5. 写三个 CSV 文件（J / static / scales）
+    # 5. 计算通信时延和计算时延的尺度
+    scales = count_per_epoch_latency_scale(
+        cfg,
+        cut_keys=[f"cut_{c1}_{c2}" for c1, c2 in cut_pairs],
+    )
+    scale_rows = [
+        {"metric": "comm_time_scale", "value": scales["comm_scale"]},
+        {"metric": "comp_time_scale", "value": scales["comp_scale"]},
+    ]
+    
+    # 6. 写三个 CSV 文件（J / static / scales）
     _write_profiling_csvs(
         cfg,
         output_dir,
         j_rows,
         static_rows,
-        comm_totals,
-        comp_totals,
+        scale_rows,
     )
 
 
@@ -223,8 +232,7 @@ def _write_profiling_csvs(
     output_dir: str,
     j_rows: List[Dict],
     static_rows: List[Dict],
-    comm_totals: List[float],
-    comp_totals: List[float],
+    scale_rows: List[Dict],
 ) -> None:
     logging_cfg = cfg.logging
 
@@ -250,14 +258,8 @@ def _write_profiling_csvs(
 
     # 3) scales.csv：给在线阶段的 scale 归一化用
     scale_csv_path = os.path.join(output_dir, logging_cfg.scale_csv)
-    if comm_totals and comp_totals:
-        comm_max = max(comm_totals)
-        comp_max = max(comp_totals)
-        scale_rows = [
-            {"metric": "comm_time_scale", "value": comm_max},
-            {"metric": "comp_time_scale", "value": comp_max},
-        ]
-        fieldnames = ["metric", "value"]
+    if scale_rows:
+        fieldnames = list(scale_rows[0].keys())
         with open(scale_csv_path, "w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()

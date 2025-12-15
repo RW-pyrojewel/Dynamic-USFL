@@ -1,4 +1,4 @@
-# src/usfl/static_split.py（示例）
+# src/usfl/u_shaped_split.py
 from typing import Tuple, Dict, Any
 
 from torch import Tensor
@@ -8,9 +8,9 @@ from src.profiling.hooks import SegmentTimer
 from src.profiling.analyzer import RoundAnalyzer
 
 
-class StaticSplitUSFL:
+class USFLOrchestrator:
     """
-    静态切分 USFL orchestrator.
+    USFL orchestrator.
     - 持有一个 USFLBackbone（nn.Module）
     - 管理 (cut1, cut2)
     - 在两处切分点收集 smashed data 和 profiling
