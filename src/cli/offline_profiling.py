@@ -63,7 +63,7 @@ def main():
     # -------------------------------            
     for cut1 in range(frontend_cut_range[0], frontend_cut_range[1] + 1):
         for cut2 in range(backend_cut_range[0], backend_cut_range[1] + 1):
-            if cut2 <= cut1:
+            if cut2 < cut1:
                 continue
             
             cut_pairs.append((cut1, cut2))

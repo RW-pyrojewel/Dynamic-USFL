@@ -247,11 +247,13 @@ def compute_final_objective(
             raise ValueError("min_comm, max_comm, min_comp, max_comp must be provided for minmax normalization.")
         comm_cost = (comm_total - comm_min) / max(1e-6, (comm_max - comm_min))
         comp_cost = (comp_total - comp_min) / max(1e-6, (comp_max - comp_min))
-        comp_cost_client = (comp_client_total - comp_min) / max(1e-6, (comp_max - comp_min))
-        comp_cost_server = (comp_server_total - comp_min) / max(1e-6, (comp_max - comp_min))
+        comp_cost_client = comp_cost * (comp_client_total / comp_total) if comp_total > 0 else 0.0
+        comp_cost_server = comp_cost * (comp_server_total / comp_total) if comp_total > 0 else 0.0
     else:
         comm_cost = comm_total
         comp_cost = comp_total
+        comp_cost_client = comp_client_total
+        comp_cost_server = comp_server_total
 
     # 5) 加权求 J
     if obj_cfg is not None and getattr(obj_cfg, "weights", None) is not None:

@@ -202,5 +202,9 @@ def build_front_template_from_backbone(backbone: USFLBackbone, cut1: int) -> nn.
         raise ValueError(f"cut1={cut1} out of range for backbone.layers (len={len(layers)})")
 
     # f1 includes layers[0..cut1] inclusive
-    front_modules = [layers[i] for i in range(cut1 + 1)]
+    front_modules = []
+    for layer in layers[: cut1 + 1]:
+        _reinit_weights(layer)
+        front_modules.append(layer)
+    
     return nn.Sequential(*front_modules)

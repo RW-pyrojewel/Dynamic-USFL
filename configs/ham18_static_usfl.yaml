@@ -101,7 +101,7 @@ privacy:
     patience: 5
     lia_hidden_dim: 256
     lia_dropout: 0.0
-    attacker_ckpt_dir: ./checkpoints/privacy/sae
+    save_attacker_ckpt: true
     decoder_channel_min: 32
     decoder_out_act: sigmoid
   metrics:

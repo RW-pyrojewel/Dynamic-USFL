@@ -155,8 +155,11 @@ def train_or_load_sae_attacker(
 
     Checkpoint is per cut_key.
     """
-    os.makedirs(priv_cfg.sae.attacker_ckpt_dir, exist_ok=True)
-    ckpt_path = os.path.join(priv_cfg.sae.attacker_ckpt_dir, f"sae_{cut_key}.pt")
+    output_dir = os.path.join(cfg.experiment.output_dir)
+    cut_dir = os.path.join(output_dir, cut_key)
+    if os.path.exists(cut_dir):
+        output_dir = cut_dir
+    ckpt_path = os.path.join(output_dir, "checkpoints", f"sae_attacker.pth")
 
     attacker = build_attacker_for_cut(cfg, priv_cfg, backbone_template, cut1, victim_batch, device)
 

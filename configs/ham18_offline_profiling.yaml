@@ -32,8 +32,8 @@ usfl:
   local_steps: 1                 # 每轮通信前每个客户端本地更新步数
   aggregation: fedavg            # 后面 aggregation.py 里用这个 key
   split:
-    frontend_cut_range: [0, 6]   # 前端切分层范围
-    backend_cut_range: [1, 5]    # 后端切分层范围
+    frontend_cut_range: [0, 5]   # 前端切分层范围
+    backend_cut_range: [0, 5]    # 后端切分层范围
 
 training:
   device: cuda
@@ -106,7 +106,7 @@ privacy:
     patience: 5
     lia_hidden_dim: 256
     lia_dropout: 0.0
-    attacker_ckpt_dir: ./checkpoints/privacy/sae
+    save_attacker_ckpt: true
     decoder_channel_min: 32
     decoder_out_act: sigmoid
   metrics:
