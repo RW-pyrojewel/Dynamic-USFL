@@ -4,7 +4,7 @@ experiment:
   name: ham18_static_usfl
   output_dir: ./logs/ham18_static_usfl
 
-seed: 42
+seed: 52
 
 data:
   dataset: ham10000
@@ -32,7 +32,7 @@ usfl:
   local_steps: 1                 # 每轮通信前每个客户端本地更新步数
   aggregation: fedavg            # 后面 aggregation.py 里用这个 key
   split:
-    j_score_csv: ./logs/ham18_offline_profiling/scales.csv  # 离线分析得到的 J 值文件
+    j_score_csv: ./logs/ham18_offline_profiling/j_scores.csv  # 离线分析得到的 J 值文件
 
 training:
   device: cuda
@@ -55,10 +55,9 @@ simulation:
     kappa_server: 1              # 服务器计算能力系数，用于缩放计算时间
 
 optimizer:
-  type: sgd                      # sgd / adam
-  lr: 0.01
-  momentum: 0.9
-  weight_decay: 5e-4
+  type: adam                     # sgd / adam
+  lr: 1e-4
+  weight_decay: 0.0
 
 metrics:
   average: macro                 # precision / recall / F1 计算方式：macro / micro / weighted
@@ -94,6 +93,7 @@ privacy:
     lr: 1.0e-3
     weight_decay: 1.0e-4
     mixmatch:
+      labeled_fraction: 0.1
       T: 0.5
       alpha: 0.75
       lambda_u: 75.0

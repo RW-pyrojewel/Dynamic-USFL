@@ -19,6 +19,7 @@ import os
 import torch
 
 from src.config.parser import load_config, parse_overrides
+from src.privacy.api import evaluate_privacy_for_cut
 from src.usfl.train_loop import train_static_usfl
 
 from src.metrics.logger import MetricsLogger
@@ -49,13 +50,13 @@ def main():
     cfg = load_config(args.config, overrides=overrides)
     exp_name = cfg.experiment.name
     output_dir = cfg.experiment.output_dir
-    results = {}
     
     # 2. select cut points
-    cut1, cut2 = select_static_cut(cfg)
+    # cut1, cut2 = select_static_cut(cfg)
+    cut1, cut2 = 0, 1   # 固定 cut 点
     
     # 3. set seed
-    seed = getattr(cfg, "seed", 42)
+    seed = getattr(cfg, "seed", 52)
     set_seed(seed)
     
     # 4. build dataloaders
@@ -80,16 +81,21 @@ def main():
         val_loader=val_loader,
         criterion=criterion,
         logger=logger,
-        privacy_fn=None,
     )
     
     # 8. run attacks to evaluate privacy
-    privacy_score = 0.0        
+    privacy_res = evaluate_privacy_for_cut(
+        cfg=cfg,
+        cut_key=f"cut_{cut1}_{cut2}",
+        cut_dir=os.path.abspath(output_dir),
+        cut1=cut1,
+        backbone_template=backbone,   # 仅用于“切结构”，内部会重置权重避免泄漏
+        device=cfg.training.device,
+    )        
     result = compute_final_objective(
         cfg, 
-        privacy_score=privacy_score, 
-        save_json=True, 
-        cut_dir=f"cut_{cut1}_{cut2}"
+        privacy_score=privacy_res.P_global, 
+        save_json=True,
     )
     
     acc_mode = (getattr(cfg.objective, "acc_mode", "final") if hasattr(cfg, "objective") else "final").capitalize()
@@ -98,7 +104,7 @@ def main():
     print(f"{acc_mode} accuracy      : {result['acc_final']:.4f}")
     print(f"Total communication time   : {result['comm_total']:.3e}")
     print(f"Total computation time     : {result['comp_total']:.3f} s")
-    print(f"LIA AUC (privacy)          : {result['privacy_score']:.4f}")
+    print(f"Privacy score              : {result['privacy_score']:.4f}")
     print(f"J_global                   : {result['J']:.6f}")
     print(f"(detail saved to {os.path.join(output_dir, 'global_objective.json')})")
 

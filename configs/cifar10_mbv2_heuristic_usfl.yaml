@@ -1,10 +1,10 @@
-# configs/cifar10_mbv2_offline_profiling.yaml
+# configs/cifar10_mbv2_static_usfl.yaml
 
 experiment:
-  name: cifar10_mbv2_offline_profiling
-  output_dir: ./logs/cifar10_mbv2_offline_profiling
+  name: cifar10_mbv2_static_usfl
+  output_dir: ./logs/cifar10_mbv2_static_usfl
 
-seed: 42
+seed: 62
 
 data:
   dataset: cifar10
@@ -20,7 +20,7 @@ data:
     random_crop_padding: 4
     random_horizontal_flip: true
     color_jitter: false
-  iid: true
+  iid: false
 
 model:
   backbone: mobilenetv2
@@ -28,21 +28,20 @@ model:
   in_channels: 3
 
 usfl:
-  mode: profiling
-  num_clients: 5
-  local_steps: 1
-  aggregation: fedavg
+  mode: heuristic                # 这里是启发式切分 baseline
+  num_clients: 5                 # 客户端数量
+  local_steps: 1                 # 每轮通信前每个客户端本地更新步数
+  aggregation: fedavg            # 后面 aggregation.py 里用这个 key
   split:
-    frontend_cut_range: [0, 5]
-    backend_cut_range: [0, 5]
+    j_score_csv: ./logs/cifar10_mbv2_offline_profiling/j_scores.csv  # 离线分析得到的 J 值文件
 
 training:
   device: cuda
   epochs: 200
-  mixed_precision: true
-  grad_clip: 5.0
-  eval_every: 1
-  save_every: 10
+  mixed_precision: true          # 混合精度训练，用 torch.cuda.amp 可以减一点通信时间
+  grad_clip: 5.0                 # 0 或 None 表示不裁剪
+  eval_every: 1                  # 每多少个 epoch 跑一次验证
+  save_every: 10                 # 每多少个 epoch 存一次 checkpoint
 
 simulation:
   comm:
@@ -50,31 +49,27 @@ simulation:
     bw_up_mbps: 80.0
     bw_down_mbps: 80.0
     rtt_ms: 10.0
-    temporal_corr: 0.0
+    temporal_corr: 0.0           # 不随时间变
     jitter_std: 0.0
   comp:
-    kappa_client: 10
-    kappa_server: 1
+    kappa_client: 10             # 客户端计算能力系数，用于缩放计算时间
+    kappa_server: 1              # 服务器计算能力系数，用于缩放计算时间
 
 optimizer:
-  type: adam
+  type: adam                     # sgd / adam
   lr: 0.001
   weight_decay: 0.0
 
 metrics:
-  average: macro
-  multi_class: ovr
+  average: macro                 # precision / recall / F1 计算方式：macro / micro / weighted
+  multi-class: ovr               # AUC 计算方式：ovr / ovo
 
 logging:
-  log_interval: 10
+  log_interval: 10               # 每多少个 iteration 打一次日志
   save_checkpoints: true
-  tensorboard: true
+  tensorboard: true              
   train_csv: train_metrics.csv
   val_csv: val_metrics.csv
-  j_score_csv: j_scores.csv
-  static_cost_csv: static_costs.csv
-  feature_csv: features.csv
-  scale_csv: scales.csv
 
 privacy:
   enable: true
@@ -116,10 +111,12 @@ privacy:
     mia_scale: 1.0              # 将质量映射到 [0,1] 时的缩放，先占位
 
 objective:
-  acc_mode: final
+  acc_mode: final                # accuracy 计算方式：final / best
+  # J 值计算默认等权重
   weights:
     acc_cost: 1
     comm: 1
     comp: 1
     privacy: 1
-  normalize_method: minmax
+  normalize_method: scale        # 默认缩放
+  scale_csv: ./logs/cifar10_mbv2_offline_profiling/scales.csv
