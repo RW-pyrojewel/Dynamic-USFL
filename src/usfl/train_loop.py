@@ -46,19 +46,6 @@ def build_optimizer(cfg, params):
         raise ValueError(f"Unknown optimizer type: {cfg.optimizer.type}")
 
 
-# def build_scheduler(cfg, optimizer):
-#     if getattr(cfg.scheduler, "type", "none") == "step_lr":
-#         return torch.optim.lr_scheduler.StepLR(
-#             optimizer,
-#             step_size=cfg.scheduler.step_size,
-#             gamma=cfg.scheduler.gamma,
-#         )
-#     elif cfg.scheduler.type == "none":
-#         return None
-#     else:
-#         raise ValueError(f"Unknown scheduler type: {cfg.scheduler.type}")
-
-
 def train_static_usfl(
     cfg,
     backbone: USFLBackbone,

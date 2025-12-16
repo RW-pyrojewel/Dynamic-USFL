@@ -2,9 +2,8 @@
 import csv
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
-import numpy as np
 
 
 def _resolve_log_paths(cfg, cut_dir: str = None) -> Dict[str, str]:
@@ -67,22 +66,21 @@ def _load_best_val_acc(val_csv: str, mode: str = "best") -> float:
     return best_acc
 
 
-def _load_train_totals(train_csv: str) -> Dict[str, float]:
+def _load_total_latency(val_csv: str) -> Dict[str, float]:
     """
-    从 train_metrics.csv 中累加总通信量 / 总计算时间，并返回各自的最小/最大值。
-    这里假定 logger 至少写了：
-      - comm_time
-      - comp_time
+    从 val_metrics.csv 中累加总通信量 / 总计算时间，并返回各自的最大值。
     """
-    if not os.path.isfile(train_csv):
-        raise FileNotFoundError(f"Train metrics file not found: {train_csv}")
+    if not os.path.isfile(val_csv):
+        raise FileNotFoundError(f"Validation metrics file not found: {val_csv}")
 
     comm_total = 0.0
     comp_total = 0.0
     comp_client_total = 0.0
     comp_server_total = 0.0
+    comm_max = 0.0
+    comp_max = 0.0
 
-    with open(train_csv, "r", encoding="utf-8") as f:
+    with open(val_csv, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             # 安全解析数值，解析失败则当作 0.0
@@ -107,12 +105,19 @@ def _load_train_totals(train_csv: str) -> Dict[str, float]:
             comp_total += comp
             comp_client_total += comp_client
             comp_server_total += comp_server
+            
+            if comm > comm_max:
+                comm_max = comm
+            if comp > comp_max:
+                comp_max = comp
 
     return {
         "comm_total": comm_total,
         "comp_total": comp_total,
         "comp_client_total": comp_client_total,
         "comp_server_total": comp_server_total,
+        "comm_max": comm_max,
+        "comp_max": comp_max,
     }
 
 
@@ -132,7 +137,7 @@ def _load_scales(scale_csv: str) -> Dict[str, float]:
                 value = float(row.get("value", 0.0))
             except (TypeError, ValueError):
                 value = 0.0
-            scales[key] = {"value": value}
+            scales[key] = value
     return scales
 
 
@@ -145,8 +150,8 @@ def count_total_latency(cfg, cut_keys: List[str]) -> Dict[str, List[float]]:
 
     for cut_key in cut_keys:
         paths = _resolve_log_paths(cfg, cut_dir=cut_key)
-        train_csv = paths["train_csv"]
-        totals = _load_train_totals(train_csv)
+        val_csv = paths["val_csv"]
+        totals = _load_total_latency(val_csv)
         comm = totals["comm_total"]
         comp = totals["comp_total"]
         comm_totals.append(comm)
@@ -162,37 +167,21 @@ def count_per_epoch_latency_scale(cfg, cut_keys: List[str]) -> Dict[str, float]:
     """
     计算所有 cut 下每轮通信时延和计算时延的尺度。
     """
-    epochs = getattr(cfg.training, "epochs", 1) if hasattr(cfg, "training") else 1
-    comm_epoch: Dict[Tuple[str, int], float] = {(cut_key, epoch): 0.0 for cut_key in cut_keys for epoch in range(1, epochs + 1)}
-    comp_epoch: Dict[Tuple[str, int], float] = {(cut_key, epoch): 0.0 for cut_key in cut_keys for epoch in range(1, epochs + 1)}
+    comm_epoch_max = 0.0
+    comp_epoch_max = 0.0
     
     for cut_key in cut_keys:
         paths = _resolve_log_paths(cfg, cut_dir=cut_key)
-        train_csv = paths["train_csv"]
+        val_csv = paths["val_csv"]
 
-        if not os.path.isfile(train_csv):
-            raise FileNotFoundError(f"Train metrics file not found: {train_csv}")
+        total = _load_total_latency(val_csv)
+        
+        if total["comm_max"] > comm_epoch_max:
+            comm_epoch_max = total["comm_max"]
+        if total["comp_max"] > comp_epoch_max:
+            comp_epoch_max = total["comp_max"]
 
-        with open(train_csv, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                try:
-                    epoch = int(row.get("epoch", 1))
-                except (TypeError, ValueError):
-                    epoch = 1
-                try:
-                    comm = float(row.get("comm_time", 0.0))
-                except (TypeError, ValueError):
-                    comm = 0.0
-                try:
-                    comp = float(row.get("comp_time", 0.0))
-                except (TypeError, ValueError):
-                    comp = 0.0
-
-                comm_epoch[(cut_key, epoch)] += comm
-                comp_epoch[(cut_key, epoch)] += comp
-
-        return {"comm_scale": max(comm_epoch.values()), "comp_scale": max(comp_epoch.values())}
+        return {"comm_scale": comm_epoch_max, "comp_scale": comp_epoch_max}
 
 
 def compute_final_objective(
@@ -260,7 +249,7 @@ def compute_final_objective(
     acc_cost = 1.0 - acc_final
 
     # 2) 累加总通信量 / 总计算时间
-    totals = _load_train_totals(train_csv)
+    totals = _load_total_latency(val_csv)
     comm_total = totals["comm_total"]
     comp_total = totals["comp_total"]
     comp_client_total = totals["comp_client_total"]
@@ -273,12 +262,12 @@ def compute_final_objective(
     normalize_method = getattr(obj_cfg, "normalize_method", "scale") if obj_cfg is not None else "scale"
     if normalize_method == "scale":
         scales = _load_scales(scale_csv)
-        s_comm = scales.get("comm_time_scale", {}).get("value", 1.0)
-        s_comp = scales.get("comp_time_scale", {}).get("value", 1.0)
-        comm_cost = comm_total / (1e-6 + s_comm)
-        comp_cost = comp_total / (1e-6 + s_comp)
-        comp_cost_client = comp_client_total / (1e-6 + s_comp)
-        comp_cost_server = comp_server_total / (1e-6 + s_comp)
+        s_comm = scales.get("comm_time_scale", 1.0)
+        s_comp = scales.get("comp_time_scale", 1.0)
+        comm_cost = min(1, comm_total / (1e-6 + s_comm))
+        comp_cost = min(1, comp_total / (1e-6 + s_comp))
+        comp_cost_client = min(1, comp_client_total / (1e-6 + s_comp))
+        comp_cost_server = min(1, comp_server_total / (1e-6 + s_comp))
     elif normalize_method == "minmax":
         if comm_min is None or comm_max is None or comp_min is None or comp_max is None:
             raise ValueError("min_comm, max_comm, min_comp, max_comp must be provided for minmax normalization.")

@@ -166,12 +166,13 @@ def main():
         w_acc = getattr(cfg.objective.weights, "acc_cost", 1.0)
         w_priv = getattr(cfg.objective.weights, "privacy", 1.0)
         w_comp = getattr(cfg.objective.weights, "comp", 1.0)
+        w_comm = getattr(cfg.objective.weights, "comm", 1.0)
 
         static_cost = (
             w_acc * result["acc_cost"]
             + w_priv * result["privacy_cost"]
             + w_comp * result.get("comp_cost_client", 0.0)
-        )
+        ) / (w_acc + w_priv + w_comp + w_comm)
 
         static_rows.append(
             {

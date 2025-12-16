@@ -65,7 +65,7 @@ metrics:
   multi-class: ovr               # AUC 计算方式：ovr / ovo
 
 logging:
-  log_interval: 1                # 每多少个 iteration 打一次日志
+  log_interval: 1                 # 每多少个 iteration 打一次日志
   save_checkpoints: true
   tensorboard: true
   train_csv: train_metrics.csv

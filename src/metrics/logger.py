@@ -110,15 +110,9 @@ class MetricsLogger:
         val_stats 示例：
             {"val_loss": float, "val_acc": float}
         """
-        row = {
-            "epoch": epoch,
-            "val_loss": float(val_stats.get("val_loss", 0.0)),
-            "val_acc": float(val_stats.get("val_acc", 0.0)),
-            "val_precision": float(val_stats.get("val_precision", 0.0)),
-            "val_recall": float(val_stats.get("val_recall", 0.0)),
-            "val_f1": float(val_stats.get("val_f1", 0.0)),
-            "val_auc": float(val_stats.get("val_auc", 0.0)),
-        }
+        row = self._build_val_row(epoch, val_stats)
+        
+        # 写 CSV（追加）
         self._write_val_row(row)
 
         if self.tb_writer is not None:
@@ -250,9 +244,120 @@ class MetricsLogger:
                 self._train_header_written = True
             writer.writerow(row)
 
+    def _build_val_row(self, epoch: int, val_stats: Dict[str, float]) -> Dict[str, Any]:
+        """
+        构建验证 epoch 行。同时统计轮级通信和计算时间。
+        """
+        row = {
+            "epoch": epoch,
+            "val_loss": float(val_stats.get("val_loss", 0.0)),
+            "val_acc": float(val_stats.get("val_acc", 0.0)),
+            "val_precision": float(val_stats.get("val_precision", 0.0)),
+            "val_recall": float(val_stats.get("val_recall", 0.0)),
+            "val_f1": float(val_stats.get("val_f1", 0.0)),
+            "val_auc": float(val_stats.get("val_auc", 0.0)),
+        }
+        
+        # 读 training CSV 计算 comm_time 和 comp_time
+        train_csv = self.train_csv
+        # 默认值
+        row["comm_time"] = 0.0
+        row["comp_time"] = 0.0
+        row["comp_time_client"] = 0.0
+        row["comp_time_server"] = 0.0
+
+        if not os.path.isfile(train_csv):
+            return row
+
+        per_client: Dict[int, Dict[str, float]] = {}
+        try:
+            with open(train_csv, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    # 解析 epoch
+                    try:
+                        r_epoch = int(r.get("epoch", "-1"))
+                    except Exception:
+                        try:
+                            r_epoch = int(float(r.get("epoch", "-1")))
+                        except Exception:
+                            continue
+                    if r_epoch != epoch:
+                        continue
+
+                    # 解析 client_idx
+                    client_raw = r.get("client_idx", None)
+                    if client_raw is None or client_raw == "":
+                        continue
+                    try:
+                        client_idx = int(client_raw)
+                    except Exception:
+                        try:
+                            client_idx = int(float(client_raw))
+                        except Exception:
+                            continue
+
+                    # 读取数值字段，容错处理空串
+                    def _f(key: str) -> float:
+                        try:
+                            return float(r.get(key, 0.0) or 0.0)
+                        except Exception:
+                            return 0.0
+
+                    comm_time = _f("comm_time")
+                    comp_time = _f("comp_time")
+                    comp_time_client = _f("comp_time_client")
+                    comp_time_server = _f("comp_time_server")
+
+                    if client_idx not in per_client:
+                        per_client[client_idx] = {
+                            "comm_time": 0.0,
+                            "comp_time": 0.0,
+                            "comp_time_client": 0.0,
+                            "comp_time_server": 0.0,
+                        }
+
+                    per_client[client_idx]["comm_time"] += comm_time
+                    per_client[client_idx]["comp_time"] += comp_time
+                    per_client[client_idx]["comp_time_client"] += comp_time_client
+                    per_client[client_idx]["comp_time_server"] += comp_time_server
+        except Exception:
+            return row
+
+        if not per_client:
+            return row
+
+        # 各 client 的累计 comm_time/comp_time 的最大值
+        max_comm = max(v["comm_time"] for v in per_client.values())
+        max_comp = max(v["comp_time"] for v in per_client.values())
+
+        # 找到累计 comp_time 最大的 client，取其 comp_time_client / comp_time_server
+        max_comp_client = max(per_client.items(), key=lambda kv: kv[1]["comp_time"])[0]
+        comp_client_val = per_client[max_comp_client]["comp_time_client"]
+        comp_server_val = per_client[max_comp_client]["comp_time_server"]
+
+        row["comm_time"] = float(max_comm)
+        row["comp_time"] = float(max_comp)
+        row["comp_time_client"] = float(comp_client_val)
+        row["comp_time_server"] = float(comp_server_val)
+
+        return row
+    
     def _write_val_row(self, row: Dict[str, Any]) -> None:
         os.makedirs(os.path.dirname(self.val_csv), exist_ok=True)
-        fieldnames = ["epoch", "val_loss", "val_acc", "val_precision", "val_recall", "val_f1", "val_auc"]
+        fieldnames = [
+            "epoch", 
+            "val_loss", 
+            "val_acc", 
+            "val_precision", 
+            "val_recall", 
+            "val_f1", 
+            "val_auc", 
+            "comm_time", 
+            "comp_time", 
+            "comp_time_client", 
+            "comp_time_server"
+        ]
 
         write_header = not self._val_header_written
         with open(self.val_csv, "a", newline="", encoding="utf-8") as f:
