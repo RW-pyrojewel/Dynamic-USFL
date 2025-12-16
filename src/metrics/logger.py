@@ -8,23 +8,13 @@ from datetime import datetime
 
 from torch.utils.tensorboard import SummaryWriter
 
+from src.bandit.linucb_dualcut import BanditDecision
 from src.network.simulator import NetworkSimulator
 
 
 class MetricsLogger:
     """
     负责把训练/验证过程中的指标写到 CSV（和可选的 TensorBoard）。
-
-    训练日志：每个 client、每个 batch 一条记录：
-      log_train_round(
-        client_idx, global_round, epoch, batch_idx,
-        metrics, profiling, net_sim
-      )
-
-    - metrics: acc 和 loss 等指标
-    - profiling: 来自 StaticSplitUSFL 的 profiling dict
-                  （比如 bytes_up, bytes_down, comp_time, t_front, t_middle, t_back, smashed1_numel, smashed2_numel, cut_points 等）
-    - net_sim: NetworkSimulator 实例，用于计算通信时间
     """
 
     def __init__(self, exp_name: str, output_dir: str, cfg, cut_dir: str = None) -> None:
@@ -36,7 +26,7 @@ class MetricsLogger:
             self.output_dir = os.path.join(self.output_dir, cut_dir)
             os.makedirs(self.output_dir, exist_ok=True)
 
-        # train / val CSV 路径
+        # train / val / bandit CSV 路径
         # 优先使用 cfg.logging 设置的路径，否则默认 train_metrics.csv / val_metrics.csv
         log_cfg = getattr(cfg, "logging", None)
         if log_cfg is not None and getattr(log_cfg, "train_csv", None) is not None:
@@ -47,6 +37,8 @@ class MetricsLogger:
             self.val_csv = os.path.join(self.output_dir, log_cfg.val_csv)
         else:
             self.val_csv = os.path.join(self.output_dir, "val_metrics.csv")
+        if log_cfg is not None and getattr(log_cfg, "bandit_csv", None) is not None:
+            self.bandit_csv = os.path.join(self.output_dir, log_cfg.bandit_csv)
 
         # TensorBoard
         use_tb = bool(getattr(log_cfg, "tensorboard", False)) if log_cfg is not None else False
@@ -123,6 +115,35 @@ class MetricsLogger:
             self.tb_writer.add_scalar("val/f1", row["val_f1"], epoch)
             self.tb_writer.add_scalar("val/auc", row["val_auc"], epoch)
 
+    def log_bandit_decision(self, epoch: int, bandit_decision: BanditDecision) -> None:
+        """
+        记录 LinUCB 每个 epoch 的决策结果到 CSV。
+        """
+        if bandit_decision is None or not hasattr(self, "bandit_csv"):
+            return
+
+        bandit_csv = self.bandit_csv
+        write_header = not os.path.isfile(bandit_csv) or os.path.getsize(bandit_csv) == 0
+        fieldnames = [
+            "epoch",
+            "chosen_cut1",
+            "chosen_cut2",
+            "estimated_j",
+            "estimated_dyn_cost",
+        ]
+
+        with open(bandit_csv, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            writer.writerow({
+                "epoch": epoch,
+                "chosen_cut1": bandit_decision.action[0],
+                "chosen_cut2": bandit_decision.action[1],
+                "estimated_j": bandit_decision.j_hat,
+                "estimated_dyn_cost": bandit_decision.d_hat,
+            })
+    
     def close(self):
         if self.tb_writer is not None:
             self.tb_writer.close()
@@ -356,7 +377,7 @@ class MetricsLogger:
             "comm_time", 
             "comp_time", 
             "comp_time_client", 
-            "comp_time_server"
+            "comp_time_server",
         ]
 
         write_header = not self._val_header_written

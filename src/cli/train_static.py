@@ -52,8 +52,7 @@ def main():
     output_dir = cfg.experiment.output_dir
     
     # 2. select cut points
-    # cut1, cut2 = select_static_cut(cfg)
-    cut1, cut2 = 0, 1   # 固定 cut 点
+    cut1, cut2 = select_static_cut(cfg)
     
     # 3. set seed
     seed = getattr(cfg, "seed", 52)

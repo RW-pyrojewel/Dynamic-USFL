@@ -4,6 +4,8 @@ import json
 import os
 from typing import Dict, List, Optional
 
+from src.bandit.linucb_dualcut import CutPair
+
 
 
 def _resolve_log_paths(cfg, cut_dir: str = None) -> Dict[str, str]:
@@ -121,6 +123,34 @@ def _load_total_latency(val_csv: str) -> Dict[str, float]:
     }
 
 
+def _load_epoch_latency(val_csv: str, epoch: int) -> Dict[str, float]:
+    """
+    从 val_metrics.csv 中取指定 epoch 的通信量 / 计算时间。
+    """
+    if not os.path.isfile(val_csv):
+        raise FileNotFoundError(f"Validation metrics file not found: {val_csv}")
+
+    with open(val_csv, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                row_epoch = int(row.get("epoch", -1))
+            except (TypeError, ValueError):
+                row_epoch = -1
+            if row_epoch == epoch:
+                try:
+                    comm = float(row.get("comm_time", 0.0))
+                except (TypeError, ValueError):
+                    comm = 0.0
+                try:
+                    comp_server = float(row.get("comp_time_server", 0.0))
+                except (TypeError, ValueError):
+                    comp_server = 0.0
+                return {"comm": comm, "comp_server": comp_server}
+
+    return {"comm": 0.0, "comp_server": 0.0}
+
+
 def _load_scales(scale_csv: str) -> Dict[str, float]:
     """
     从 scales.csv 中加载通信量和计算时间的缩放尺度。
@@ -236,7 +266,6 @@ def compute_final_objective(
         }
     """
     paths = _resolve_log_paths(cfg, cut_dir=cut_dir)
-    train_csv = paths["train_csv"]
     val_csv = paths["val_csv"]
     scale_csv = paths["scale_csv"]
 
@@ -328,3 +357,71 @@ def compute_final_objective(
             pass
 
     return result
+
+
+def load_static_cost(cfg) -> Dict[CutPair, float]:
+    """
+    从配置中加载静态成本字典。
+    返回一个字典，键为 (cut1, cut2) 元组，值为对应的静态成本。
+    """
+    static_cost_csv = getattr(cfg.bandit, "static_cost_csv", None) if hasattr(cfg, "bandit") else None
+    if static_cost_csv is None:
+        raise ValueError("Config must specify bandit.static_cost_csv for static cost USFL.")
+    
+    static_cost = {}
+    
+    with open(static_cost_csv, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                cut1 = int(row.get("cut1", 0))
+                cut2 = int(row.get("cut2", 0))
+                cost = float(row.get("static_cost", 0.0))
+                static_cost[(cut1, cut2)] = cost
+            except (TypeError, ValueError):
+                continue
+            static_cost[(cut1, cut2)] = cost
+
+
+def compute_dynamic_cost(
+    cfg,
+    epoch: int,
+    cut_dir: str = None,
+) -> float:
+    """
+    计算单轮的动态代价 d_hat。
+    """
+    paths = _resolve_log_paths(cfg, cut_dir=cut_dir)
+    val_csv = paths["val_csv"]
+    scale_csv = paths["scale_csv"]
+
+    # 读取 scale 数据
+    scales = _load_scales(scale_csv)
+    comm_scale = scales.get("comm_time_scale", 1.0)
+    comp_scale = scales.get("comp_time_scale", 1.0)
+
+    # 读取 val_csv 中的通信和计算时间
+    epoch_latency = _load_epoch_latency(val_csv, epoch)
+    if not epoch_latency:
+        return float("inf")
+
+    # 归一化
+    comm_cost = min(1, epoch_latency["comm"] / (1e-6 + comm_scale))
+    comp_cost_server = min(1, epoch_latency["comp_server"] / (1e-6 + comp_scale))
+    
+    # 加权求动态代价
+    obj_cfg = getattr(cfg, "objective", None)
+    if obj_cfg is not None and getattr(obj_cfg, "weights", None) is not None:
+        w = obj_cfg.weights
+        w_acc = float(getattr(w, "acc_cost", 1))
+        w_comm = float(getattr(w, "comm", 1))
+        w_comp = float(getattr(w, "comp", 1))
+        w_priv = float(getattr(w, "privacy", 1))
+    else:
+        w_acc = w_comm = w_comp = w_priv = 1
+    d_hat = (
+        w_comm * comm_cost
+        + w_comp * comp_cost_server
+    ) / max(1e-6, w_acc + w_comm + w_comp + w_priv)
+
+    return d_hat

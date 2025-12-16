@@ -57,7 +57,7 @@ class MobileNetV2USFLBackbone(USFLBackbone):
         cut1 %= len(self.layers)
         cut2 %= len(self.layers)
         
-        assert 0 <= cut1 <= cut2 < len(self.layers), f"Invalid cuts: {(cut1, cut2)}. Layer count: {len(self.layers)}"
+        assert 0 <= cut1 <= cut2 < len(self.layers) - 1, f"Invalid cuts: {(cut1, cut2)}. Layer count: {len(self.layers)}"
 
         z = x
         z_front, z_middle, z_back = None, None, None

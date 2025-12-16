@@ -1,8 +1,8 @@
-# configs/ham18_static_usfl.yaml
+# configs/ham18_linucb_usfl.yaml
 
 experiment:
-  name: ham18_static_usfl
-  output_dir: ./logs/ham18_static_usfl
+  name: ham18_linucb_usfl
+  output_dir: ./logs/ham18_linucb_usfl
 
 seed: 62
 
@@ -27,12 +27,10 @@ model:
   in_channels: 3
 
 usfl:
-  mode: heuristic                # 这里是启发式切分 baseline
+  mode: linucb                   # 这里是 LinUCB 动态切分
   num_clients: 5                 # 客户端数量
   local_steps: 1                 # 每轮通信前每个客户端本地更新步数
   aggregation: fedavg            # 后面 aggregation.py 里用这个 key
-  split:
-    j_score_csv: ./logs/ham18_offline_profiling/j_scores.csv  # 离线分析得到的 J 值文件
 
 training:
   device: cuda
@@ -86,6 +84,13 @@ logging:
   tensorboard: true              # 如果你准备接 TensorBoard 的话
   train_csv: train_metrics.csv
   val_csv: val_metrics.csv
+  bandit_csv: bandit_decisions.csv
+
+bandit:
+  alpha: 1.0                     # LinUCB 算法中的探索参数
+  lambda_reg: 1.0                # LinUCB 算法中的正则化参数
+  static_cost_csv: ./logs/ham18_offline_profiling/static_costs.csv  # 离线分析得到的静态开销文件
+  forced_sampling_interval: 10    # 强制采样周期（每多少个 epoch 采样一次）
 
 privacy:
   enable: true

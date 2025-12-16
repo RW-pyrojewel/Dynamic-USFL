@@ -1,42 +1,41 @@
-# configs/ham18_static_usfl.yaml
+# configs/cifar10_mbv2_linucb_usfl.yaml
 
 experiment:
-  name: ham18_static_usfl
-  output_dir: ./logs/ham18_static_usfl
+  name: cifar10_mbv2_linucb_usfl
+  output_dir: ./logs/cifar10_mbv2_linucb_usfl
 
-seed: 62
+seed: 52
 
 data:
-  dataset: ham10000
-  root: ./data/ham10000
-  num_classes: 7
-  img_size: 224
-  train_val_split: [0.8, 0.2]
+  dataset: cifar10
+  root: ./data/CIFAR-10
+  num_classes: 10
+  img_size: 32
+  train_val_split: [0.9, 0.1]
   num_workers: 4
   batch_size: 256
-  bytes_per_elem: 4              # float32
+  bytes_per_elem: 4
   augmentation:
+    random_crop: true
+    random_crop_padding: 4
     random_horizontal_flip: true
-    random_vertical_flip: false
     color_jitter: false
-  iid: false                     # 非 IID 划分数据集
+  iid: false
 
 model:
-  backbone: resnet18
+  backbone: mobilenetv2
   pretrained: false
   in_channels: 3
 
 usfl:
-  mode: heuristic                # 这里是启发式切分 baseline
+  mode: linucb                   # 这里是 LinUCB 动态切分
   num_clients: 5                 # 客户端数量
   local_steps: 1                 # 每轮通信前每个客户端本地更新步数
   aggregation: fedavg            # 后面 aggregation.py 里用这个 key
-  split:
-    j_score_csv: ./logs/ham18_offline_profiling/j_scores.csv  # 离线分析得到的 J 值文件
 
 training:
   device: cuda
-  epochs: 100
+  epochs: 200
   mixed_precision: true          # 混合精度训练，用 torch.cuda.amp 可以减一点通信时间
   grad_clip: 5.0                 # 0 或 None 表示不裁剪
   eval_every: 1                  # 每多少个 epoch 跑一次验证
@@ -73,7 +72,7 @@ simulation:
 
 optimizer:
   type: adam                     # sgd / adam
-  lr: 1e-4
+  lr: 0.001
   weight_decay: 0.0
 
 metrics:
@@ -86,13 +85,20 @@ logging:
   tensorboard: true              # 如果你准备接 TensorBoard 的话
   train_csv: train_metrics.csv
   val_csv: val_metrics.csv
+  bandit_csv: bandit_decisions.csv
+
+bandit:
+  alpha: 1.0                     # LinUCB 算法中的探索参数
+  lambda_reg: 1.0                # LinUCB 算法中的正则化参数
+  static_cost_csv: ./logs/cifar10_mbv2_offline_profiling/static_costs.csv  # 离线分析得到的静态开销文件
+  forced_sampling_interval: 10    # 强制采样周期（每多少个 epoch 采样一次）
 
 privacy:
   enable: true
   aux_dataset:
-    name: derm7pt               # ham10000 场景默认 derm7pt
-    root: ./data/derm7pt
-    split: train                # official split / train
+    name: cinic10
+    root: ./data/CINIC-10
+    split: train
     num_workers: 4
     batch_size: 64
     max_samples: 5000           # 每个 cut 最多采样多少个样本
@@ -135,4 +141,4 @@ objective:
     comp: 1
     privacy: 1
   normalize_method: scale        # 默认缩放
-  scale_csv: ./logs/ham18_offline_profiling/scales.csv
+  scale_csv: ./logs/cifar10_mbv2_offline_profiling/scales.csv

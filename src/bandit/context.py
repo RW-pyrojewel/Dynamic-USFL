@@ -11,8 +11,10 @@ class LayerProfile:
     """
     每一个 backbone block 的静态 profile 信息（单样本维度）。
     """
-    macs: float          # Conv + Linear 的 MAC 数（不区分前向/反向）
-    params: int          # Conv + Linear 的参数量
+    conv_macs: float     # Conv 层的 MAC 数（单样本）
+    linear_macs: float   # Linear 层的 MAC 数（单样本）
+    conv_params: int     # Conv 层的参数量
+    linear_params: int   # Linear 层的参数量
     act_numel: int       # block 输出 activation 的元素数（单样本）
 
 
@@ -94,29 +96,29 @@ def profile_backbone_layers(
     x = dummy
     # 逐 block 运行，并用 forward hook 统计 Conv / Linear 的 MAC 与参数
     for block in backbone.layers:
-        stats = {"macs": 0.0, "params": 0}
+        stats = {"conv_macs": 0.0, "linear_macs": 0.0, "conv_params": 0, "linear_params": 0}
         hooks = []
 
         def make_conv_hook():
             def hook(mod: nn.Conv2d, inp, out):
                 macs = _conv_macs(mod, inp[0], out)
-                stats["macs"] += float(macs)
+                stats["conv_macs"] += float(macs)
 
                 params = mod.weight.numel()
                 if mod.bias is not None:
                     params += mod.bias.numel()
-                stats["params"] += int(params)
+                stats["conv_params"] += int(params)
             return hook
 
         def make_linear_hook():
             def hook(mod: nn.Linear, inp, out):
                 macs = _linear_macs(mod, inp[0], out)
-                stats["macs"] += float(macs)
+                stats["linear_macs"] += float(macs)
 
                 params = mod.weight.numel()
                 if mod.bias is not None:
                     params += mod.bias.numel()
-                stats["params"] += int(params)
+                stats["linear_params"] += int(params)
             return hook
 
         # 注册 block 内 Conv/Linear 的 hook
@@ -136,8 +138,10 @@ def profile_backbone_layers(
 
         profiles.append(
             LayerProfile(
-                macs=stats["macs"],
-                params=stats["params"],
+                conv_macs=stats["conv_macs"],
+                linear_macs=stats["linear_macs"],
+                conv_params=stats["conv_params"],
+                linear_params=stats["linear_params"],
                 act_numel=act_numel,
             )
         )
@@ -165,33 +169,34 @@ def build_static_context_for_cut(
       - 服务器 = 中间
     """
     L = len(profiles)
-    if not (0 <= cut1 < cut2 < L):
+    if not (0 <= cut1 <= cut2 < L - 1):
         raise ValueError(f"Invalid cuts: cut1={cut1}, cut2={cut2}, L={L}")
 
-    front_idx = list(range(0, cut1 + 1))
-    mid_idx = list(range(cut1 + 1, cut2 + 1))
-    back_idx = list(range(cut2 + 1, L))
-
-    edge_idx = front_idx + back_idx
-    server_idx = mid_idx
+    server_idx = list(range(cut1 + 1, cut2 + 1))
 
     def sum_over(idxs, key: str) -> float:
-        if key == "macs":
-            return float(sum(profiles[i].macs for i in idxs))
-        elif key == "params":
-            return float(sum(profiles[i].params for i in idxs))
+        if key == "conv_macs":
+            return float(sum(profiles[i].conv_macs for i in idxs))
+        elif key == "linear_macs":
+            return float(sum(profiles[i].linear_macs for i in idxs))
+        elif key == "conv_params":
+            return float(sum(profiles[i].conv_params for i in idxs))
+        elif key == "linear_params":
+            return float(sum(profiles[i].linear_params for i in idxs))
         elif key == "act_numel":
             return float(sum(profiles[i].act_numel for i in idxs))
         else:
             raise KeyError(key)
 
-    # MACs 总量（per batch）
-    edge_macs = batch_size * sum_over(edge_idx, "macs")
-    server_macs = batch_size * sum_over(server_idx, "macs")
+    # 按请求返回 server 端的细分统计（per batch for MACs）以及 activation bytes
+    server_conv_macs = batch_size * sum_over(server_idx, "conv_macs")
+    server_linear_macs = batch_size * sum_over(server_idx, "linear_macs")
+    server_act_macs = batch_size * sum_over(server_idx, "act_numel")
 
-    # 参数量
-    edge_params = sum_over(edge_idx, "params")
-    server_params = sum_over(server_idx, "params")
+    server_conv_params = int(sum_over(server_idx, "conv_params"))
+    server_linear_params = int(sum_over(server_idx, "linear_params"))
+    # 激活层通常无参数，保留字段但设为 0
+    server_act_params = 0
 
     # IR 大小（per batch）
     act_front_numel = profiles[cut1].act_numel
@@ -201,11 +206,13 @@ def build_static_context_for_cut(
     act_back_bytes = batch_size * act_back_numel * bytes_per_elem
 
     context = {
-        "edge_macs": edge_macs,
-        "server_macs": server_macs,
+        "server_conv_macs": float(server_conv_macs),
+        "server_linear_macs": float(server_linear_macs),
+        "server_act_macs": float(server_act_macs),
         "act_front_bytes": act_front_bytes,
         "act_back_bytes": act_back_bytes,
-        "edge_params": edge_params,
-        "server_params": server_params,
+        "server_conv_params": server_conv_params,
+        "server_linear_params": server_linear_params,
+        "server_act_params": server_act_params,
     }
     return context
