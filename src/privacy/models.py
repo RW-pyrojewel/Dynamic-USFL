@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any
 
 import math
 import torch
@@ -78,7 +78,7 @@ class LabelHead(nn.Module):
         if z.dim() != 4:
             raise ValueError(f"LabelHead expects 4D z, got {tuple(z.shape)}")
         h = self.pool(z).flatten(1)
-        h = F.relu(self.fc1(h), inplace=True)
+        h = F.relu(self.fc1(h), inplace=False)
         h = self.drop(h)
         return self.fc2(h)
 
@@ -302,7 +302,7 @@ class MirrorDecoder(nn.Module):
                 inv_layers.append(nn.BatchNorm2d(bn.num_features))
 
             elif rtype == "relu":
-                inv_layers.append(nn.ReLU(inplace=True))
+                inv_layers.append(nn.ReLU(inplace=False))
 
             elif rtype == "identity":
                 inv_layers.append(nn.Identity())
