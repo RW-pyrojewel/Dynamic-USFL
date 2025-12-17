@@ -1,0 +1,104 @@
+# configs/cifar10_mbv2_pdt_usfl.yaml
+
+experiment:
+  name: cifar10_mbv2_pdt_usfl
+  output_dir: ./logs/cifar10_mbv2_pdt_usfl
+
+seed:
+  master: 42
+  torch: 52
+
+data:
+  dataset: cifar10
+  root: ./data/CIFAR-10
+  num_classes: 10
+  img_size: 32
+  train_val_split: [0.9, 0.1]
+  num_workers: 4
+  batch_size: 256
+  bytes_per_elem: 4
+  augmentation:
+    random_crop: true
+    random_crop_padding: 4
+    random_horizontal_flip: true
+    color_jitter: false
+  iid: false
+
+model:
+  backbone: mobilenetv2
+  pretrained: false
+  in_channels: 3
+
+usfl:
+  mode: pdt                      # 这里是纯端侧训练 baseline
+  num_clients: 5                 # 客户端数量
+  local_steps: 1                 # 每轮通信前每个客户端本地更新步数
+  aggregation: fedavg            # 后面 aggregation.py 里用这个 key
+
+training:
+  device: cuda
+  epochs: 200
+  mixed_precision: true          # 混合精度训练，用 torch.cuda.amp 可以减一点通信时间
+  grad_clip: 5.0                 # 0 或 None 表示不裁剪
+  eval_every: 1                  # 每多少个 epoch 跑一次验证
+  save_every: 10                 # 每多少个 epoch 存一次 checkpoint
+
+simulation:
+  comm:
+    mode: heterogeneous   # 固定/每客户端/异构：见 simulator 支持的三种模式
+    profiles:
+      # 较好：类 Wi-Fi / 5G（低 RTT，高下行）
+      - name: good
+        bw_up_mbps: 30.0
+        bw_down_mbps: 60.0
+        rtt_ms: 12.0
+      # 常见：类 4G（中等 RTT，中等带宽）
+      - name: mid
+        bw_up_mbps: 10.0
+        bw_down_mbps: 20.0
+        rtt_ms: 35.0
+      # 较差：类 拥塞/弱覆盖（高 RTT，低带宽）
+      - name: poor
+        bw_up_mbps: 3.0
+        bw_down_mbps: 8.0
+        rtt_ms: 80.0
+    # 异构抽样比例（可按你想要的“好/中/差”占比调整）
+    profile_probs: [0.25, 0.55, 0.20]
+    # 时间波动：cap_t = cap_mean * (1 + noise_t), noise_t 为 AR(1):contentReference[oaicite:4]{index=4}
+    # temporal_corr 越接近 1 表示“缓慢变化”；jitter_std 是相对波动标准差（0.2≈20%）:contentReference[oaicite:5]{index=5}
+    temporal_corr: 0.90
+    jitter_std: 0.20
+  comp:
+    kappa_client: 10             # 客户端计算能力系数，用于缩放计算时间
+    kappa_server: 1              # 服务器计算能力系数，用于缩放计算时间
+
+optimizer:
+  type: adam                     # sgd / adam
+  lr: 0.001
+  weight_decay: 0.0
+
+metrics:
+  average: macro                 # precision / recall / F1 计算方式：macro / micro / weighted
+  multi-class: ovr               # AUC 计算方式：ovr / ovo
+
+logging:
+  log_interval: 1                # 每多少个 iteration 打一次日志
+  save_checkpoints: true
+  tensorboard: true              # 如果你准备接 TensorBoard 的话
+  train_csv: train_metrics.csv
+  val_csv: val_metrics.csv
+  net_csv: network_conditions.csv
+
+privacy:
+  enable: false
+
+objective:
+  acc_mode: final                # accuracy 计算方式：final / best
+  # J 值计算默认等权重
+  weights:
+    acc_cost: 1
+    comm: 1
+    comp: 1
+    privacy: 1
+  normalize_method: scale        # 默认缩放
+  scale_csv: ./logs/cifar10_mbv2_offline_profiling/scales.csv
