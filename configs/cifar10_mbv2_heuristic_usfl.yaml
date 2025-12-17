@@ -87,6 +87,8 @@ logging:
   tensorboard: true              
   train_csv: train_metrics.csv
   val_csv: val_metrics.csv
+  cut_csv: heuristic_cuts.csv
+  net_csv: network_conditions.csv
 
 privacy:
   enable: true

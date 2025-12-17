@@ -85,6 +85,7 @@ logging:
   train_csv: train_metrics.csv
   val_csv: val_metrics.csv
   bandit_csv: bandit_decisions.csv
+  net_csv: network_conditions.csv
 
 bandit:
   alpha: 1.0                     # LinUCB 算法中的探索参数

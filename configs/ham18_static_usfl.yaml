@@ -69,6 +69,7 @@ logging:
   tensorboard: true              # 如果你准备接 TensorBoard 的话
   train_csv: train_metrics.csv
   val_csv: val_metrics.csv
+  net_csv: network_conditions.csv
 
 privacy:
   enable: true

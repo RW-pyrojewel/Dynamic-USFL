@@ -206,7 +206,7 @@ class MetricsLogger:
         # simulated comm / comp time
         bytes_up = float(profiling.get("bytes_up", 0.0))
         bytes_down = float(profiling.get("bytes_down", 0.0))
-        comm_time = net_sim.estimate_comm_time(client_idx, bytes_up, bytes_down)
+        comm_time = net_sim.estimate_comm_time(client_idx, global_round, bytes_up, bytes_down)
         comp_time_client = float(profiling.get("comp_time_client", 0.0)) * self.kappa_client
         comp_time_server = float(profiling.get("comp_time_server", 0.0)) * self.kappa_server
         comp_time = comp_time_client + comp_time_server

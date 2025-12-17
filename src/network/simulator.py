@@ -1,6 +1,7 @@
 # src/network/simulator.py
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Any
 import math
@@ -44,6 +45,7 @@ class NetworkSimulator:
         temporal_corr: float = 0.0,
         jitter_std: float = 0.0,
         seed: Optional[int] = None,
+        net_csv: Optional[str] = None,
     ) -> None:
         """
         Parameters
@@ -65,6 +67,8 @@ class NetworkSimulator:
             capacity 归一化扰动项的标准差。例如 0.2 表示 20% 左右的波动。
         seed:
             随机种子，便于复现。
+        net_csv:
+            网络状况日志 CSV 文件路径。
         """
         assert len(profiles) >= 1, "profiles must not be empty."
         assert 0.0 <= temporal_corr < 1.0, "temporal_corr must be in [0,1)."
@@ -75,9 +79,23 @@ class NetworkSimulator:
         self.mode = mode
         self.temporal_corr = temporal_corr
         self.jitter_std = jitter_std
+        self.net_csv = net_csv
 
         if seed is not None:
             random.seed(seed)
+        
+        if self.net_csv is not None:
+            self.net_csv_fieldnames = [
+                "client_idx", 
+                "global_round", 
+                "bw_up_mbps", 
+                "bw_down_mbps", 
+                "rtt_ms", 
+                "comm_time",
+            ]
+            with open(self.net_csv, "w") as f:
+                writer = csv.DictWriter(f, fieldnames=self.net_csv_fieldnames)
+                writer.writeheader()
 
         # 为每个 client 分配一个 base profile
         if mode == "fixed":
@@ -160,6 +178,7 @@ class NetworkSimulator:
     def estimate_comm_time(
         self,
         client_idx: int,
+        global_round: int,
         bytes_up: int,
         bytes_down: int,
     ) -> float:
@@ -181,6 +200,18 @@ class NetworkSimulator:
         rtt_s = rtt_ms / 1000.0
         t_up = rtt_s / 2.0 + (bits_up / max(bw_up * 1e6, 1e-6))
         t_down = rtt_s / 2.0 + (bits_down / max(bw_down * 1e6, 1e-6))
+
+        if self.net_csv is not None:
+            with open(self.net_csv, "a") as f:
+                writer = csv.DictWriter(f, fieldnames=self.net_csv_fieldnames)
+                writer.writerow({
+                    "client_idx": client_idx,
+                    "global_round": global_round,
+                    "bw_up_mbps": bw_up,
+                    "bw_down_mbps": bw_down,
+                    "rtt_ms": rtt_ms,
+                    "comm_time": t_up + t_down
+                })
 
         return t_up + t_down
 
@@ -239,6 +270,7 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
     mode = getattr(net_cfg, "mode", "fixed")
 
     seed = getattr(cfg, "seed", None)
+    net_csv = getattr(cfg.logging, "net_csv", None) if hasattr(cfg, "logging") else None
 
     if mode == "fixed":
         bw_up = float(getattr(net_cfg, "bw_up_mbps", 80.0))
@@ -257,6 +289,7 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
             temporal_corr=temporal_corr,
             jitter_std=jitter_std,
             seed=seed,
+            net_csv=net_csv,
         )
 
     elif mode == "per_client":
