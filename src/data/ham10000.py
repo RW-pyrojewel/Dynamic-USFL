@@ -113,7 +113,7 @@ def build_ham10000_dataloaders(cfg) -> Tuple[DataLoader, DataLoader]:
     batch_size = cfg.data.batch_size
     num_workers = getattr(cfg.data, "num_workers", 4)
     split_ratio = getattr(cfg.data, "train_val_split", [0.8, 0.2])
-    seed = getattr(cfg, "seed", 42)
+    seed = getattr(cfg.seed, "master", 42)
 
     train_tfm, val_tfm = build_transforms(cfg)
 

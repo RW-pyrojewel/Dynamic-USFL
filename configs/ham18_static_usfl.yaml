@@ -4,7 +4,9 @@ experiment:
   name: ham18_static_usfl
   output_dir: ./logs/ham18_static_usfl
 
-seed: 52
+seed:
+  master: 42
+  torch: 52
 
 data:
   dataset: ham10000
@@ -44,12 +46,29 @@ training:
 
 simulation:
   comm:
-    mode: fixed
-    bw_up_mbps: 80.0
-    bw_down_mbps: 80.0
-    rtt_ms: 10.0
-    temporal_corr: 0.0           # 不随时间变
-    jitter_std: 0.0
+    mode: heterogeneous   # 固定/每客户端/异构：见 simulator 支持的三种模式
+    profiles:
+      # 较好：类 Wi-Fi / 5G（低 RTT，高下行）
+      - name: good
+        bw_up_mbps: 30.0
+        bw_down_mbps: 60.0
+        rtt_ms: 12.0
+      # 常见：类 4G（中等 RTT，中等带宽）
+      - name: mid
+        bw_up_mbps: 10.0
+        bw_down_mbps: 20.0
+        rtt_ms: 35.0
+      # 较差：类 拥塞/弱覆盖（高 RTT，低带宽）
+      - name: poor
+        bw_up_mbps: 3.0
+        bw_down_mbps: 8.0
+        rtt_ms: 80.0
+    # 异构抽样比例（可按你想要的“好/中/差”占比调整）
+    profile_probs: [0.25, 0.55, 0.20]
+    # 时间波动：cap_t = cap_mean * (1 + noise_t), noise_t 为 AR(1):contentReference[oaicite:4]{index=4}
+    # temporal_corr 越接近 1 表示“缓慢变化”；jitter_std 是相对波动标准差（0.2≈20%）:contentReference[oaicite:5]{index=5}
+    temporal_corr: 0.90
+    jitter_std: 0.20
   comp:
     kappa_client: 10             # 客户端计算能力系数，用于缩放计算时间
     kappa_server: 1              # 服务器计算能力系数，用于缩放计算时间

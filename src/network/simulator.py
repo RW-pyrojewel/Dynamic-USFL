@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
+import os
 from typing import List, Optional, Tuple, Any
 import math
 import random
@@ -269,8 +270,11 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
 
     mode = getattr(net_cfg, "mode", "fixed")
 
-    seed = getattr(cfg, "seed", None)
+    seed = getattr(cfg.seed, "master", None)
+    output_dir = getattr(cfg.experiment, "output_dir", ".")
     net_csv = getattr(cfg.logging, "net_csv", None) if hasattr(cfg, "logging") else None
+    
+    print(net_csv)
 
     if mode == "fixed":
         bw_up = float(getattr(net_cfg, "bw_up_mbps", 80.0))
@@ -289,7 +293,7 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
             temporal_corr=temporal_corr,
             jitter_std=jitter_std,
             seed=seed,
-            net_csv=net_csv,
+            net_csv=os.path.join(output_dir, net_csv) if net_csv is not None else None,
         )
 
     elif mode == "per_client":
@@ -324,6 +328,7 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
             temporal_corr=temporal_corr,
             jitter_std=jitter_std,
             seed=seed,
+            net_csv=os.path.join(output_dir, net_csv) if net_csv is not None else None,
         )
 
     elif mode == "heterogeneous":
@@ -357,6 +362,7 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
             temporal_corr=temporal_corr,
             jitter_std=jitter_std,
             seed=seed,
+            net_csv=os.path.join(output_dir, net_csv) if net_csv is not None else None,
         )
 
     else:

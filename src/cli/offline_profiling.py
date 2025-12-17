@@ -43,7 +43,7 @@ def main():
     backend_cut_range = cfg.usfl.split.backend_cut_range
 
     seed = cfg.seed
-    set_seed(seed)
+    set_seed(seed.master, seed.torch)
 
     # ---------- 全局容器 ----------
     cut_pairs: List[Tuple[int, int]] = []

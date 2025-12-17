@@ -4,7 +4,9 @@ experiment:
   name: ham18_offline_profiling
   output_dir: ./logs/ham18_offline_profiling
 
-seed: 42
+seed:
+  master: 42
+  torch: 42
 
 data:
   dataset: ham10000

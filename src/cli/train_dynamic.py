@@ -1,14 +1,14 @@
-# src/cli/train_linucb.py
+# src/cli/train_dynamic.py
 """
-Entry point for running linucb dual-cut USFL baselines.
+Entry point for running dynamic dual-cut USFL baselines.
 
 Example:
-    python -m src.cli.train_linucb \
-        --config configs/ham18_linucb_usfl.yaml
+    python -m src.cli.train_dynamic \
+        --config configs/ham18_dynamic_usfl.yaml
 
 With overrides:
-    python -m src.cli.train_linucb \
-        --config configs/ham18_linucb_usfl.yaml \
+    python -m src.cli.train_dynamic \
+        --config configs/ham18_dynamic_usfl.yaml \
         --override training.epochs=50 optimizer.lr=0.001
 """
 
@@ -19,7 +19,7 @@ import torch
 
 from src.config.parser import load_config, parse_overrides
 from src.privacy.api import evaluate_privacy_for_cut
-from src.usfl.train_loop import train_linucb_usfl
+from src.usfl.train_loop import train_dynamic_usfl
 
 from src.metrics.logger import MetricsLogger
 from src.metrics.objectives import compute_final_objective
@@ -28,7 +28,7 @@ from src.utils.seed import set_seed
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train linucb USFL baseline.")
+    parser = argparse.ArgumentParser(description="Train dynamic USFL baseline.")
     parser.add_argument(
         "--config",
         type=str,
@@ -51,9 +51,9 @@ def main():
     output_dir = cfg.experiment.output_dir
     
     # 2. set seed
-    seed = getattr(cfg, "seed", 52)
-    set_seed(seed)
-    
+    seed = getattr(cfg, "seed", {"master": 42, "torch": 42})
+    set_seed(seed.master, seed.torch)
+
     # 3. build dataloaders
     train_loader, val_loader = build_dataloaders(cfg)
 
@@ -67,8 +67,8 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     logger = MetricsLogger(exp_name=exp_name, output_dir=output_dir, cfg=cfg)
 
-    # 6. run training loop (linucb USFL)
-    train_linucb_usfl(
+    # 6. run training loop (dynamic USFL)
+    train_dynamic_usfl(
         cfg=cfg,
         backbone=backbone,
         train_loader=train_loader,

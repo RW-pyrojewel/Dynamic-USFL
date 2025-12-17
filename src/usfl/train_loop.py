@@ -22,7 +22,6 @@ from src.models.model_usfl import USFLBackbone
 from src.data.data_distribution import create_client_loaders
 from src.network.simulator import build_network_simulator
 from src.usfl.aggregation import aggregate
-from src.usfl.heuristic import load_offline_tables, select_cut_heuristic
 from src.usfl.u_shaped_split import USFLOrchestrator
 
 
@@ -336,297 +335,7 @@ def train_static_usfl(
         print("[privacy] Enabled but no samples were collected; nothing saved.")
 
 
-def train_heuristic_usfl(
-    cfg,
-    backbone: USFLBackbone,
-    train_loader: DataLoader,
-    val_loader: DataLoader,
-    criterion: nn.Module,
-    logger: MetricsLogger,
-) -> None:
-    """
-    启发式 USFL 训练循环（单机版）。
-    """
-
-    device = cfg.training.device
-
-    # ------------------------------
-    # 0. checkpoint 目录 & best_acc
-    # ------------------------------
-    # 根据 logger 推断本次 run 的目录：output_dir / cut_x_y
-    if hasattr(logger, "output_dir") and hasattr(logger, "cut_dir"):
-        run_dir = os.path.join(logger.output_dir, logger.cut_dir)
-    else:
-        # 兜底，至少保证写在 experiment.output_dir 下
-        run_dir = getattr(logger, "output_dir", getattr(cfg.experiment, "output_dir", "."))
-
-    ckpt_dir = os.path.join(run_dir, "checkpoints")
-    os.makedirs(ckpt_dir, exist_ok=True)
-
-    # ------------------------------
-    # 1. 隐私采样配置 & 缓冲区
-    # ------------------------------
-    privacy_cfg = getattr(cfg, "privacy", None)
-    privacy_enabled = bool(getattr(privacy_cfg, "enable", False)) if privacy_cfg is not None else False
-    privacy_aux = getattr(privacy_cfg, "aux_dataset", None) if privacy_cfg is not None else None
-
-    if privacy_enabled:
-        max_priv_samples = int(getattr(privacy_aux, "max_samples", 5000)) if privacy_aux is not None else 5000
-        store_x = bool(getattr(privacy_aux, "store_x", True)) if privacy_aux is not None else True
-        priv_A_front_buf: list[torch.Tensor] = []
-        priv_y_buf: list[torch.Tensor] = []
-        priv_x_buf: Optional[list[torch.Tensor]] = [] if store_x else None
-        priv_num_collected: int = 0
-        print(f"[privacy] Sampling enabled: max_samples={max_priv_samples}, store_x={store_x}")
-    else:
-        max_priv_samples = 0
-        store_x = False
-        priv_A_front_buf = None
-        priv_y_buf = None
-        priv_x_buf = None
-        priv_num_collected = 0
-        print("[privacy] Sampling disabled.")
-
-    # ------------------------------
-    # 2. 多客户端数据 & 网络模拟器
-    # ------------------------------
-    num_clients = cfg.usfl.num_clients
-    client_loaders = create_client_loaders(
-        num_clients,
-        train_loader,
-        iid=cfg.data.iid,
-    )
-    num_clients = len(client_loaders)  # 可能因为样本不足而减少客户端数量
-    net_sim = build_network_simulator(cfg, num_clients)
-
-    # ------------------------------
-    # 3. 加载静态代价
-    # ------------------------------
-    offline_tables = load_offline_tables(cfg)
-    
-    # 计算每个客户端的样本数（优先使用 DataLoader.dataset 的长度）
-    sample_counts = []
-    for cl in client_loaders:
-        if hasattr(cl, "dataset"):
-            try:
-                sample_counts.append(len(cl.dataset))
-            except Exception:
-                sample_counts.append(0)
-        else:
-            sample_counts.append(0)
-
-    # 将 local_steps 作为本地遍历次数（local epochs）
-    local_epochs = max(1, int(cfg.usfl.local_steps))
-
-    # 每个客户端维护自己的全局轮计数
-    global_round_clients = [0 for _ in range(num_clients)]
-
-    # 精确度/召回率/F1/AUC 计算方式
-    average = getattr(cfg.metrics, "average", "macro")
-    multi_class = getattr(cfg.metrics, "multi_class", "ovr")
-
-    # 数据元素字节数
-    bytes_per_elem = getattr(cfg.data, "bytes_per_elem", 4)
-
-    # 将模型放到 CPU 上，按需移动到 GPU
-    backbone.to("cpu")
-
-    # ------------------------------
-    # 3. 主训练循环
-    # ------------------------------
-
-    print(
-        f"[USFL Train] Starting training for {cfg.training.epochs} epochs, "
-        f"{num_clients} clients, local_epochs={local_epochs}."
-    )
-
-    for epoch in range(1, cfg.training.epochs + 1):
-        # 本轮（epoch）: 每个客户端在其本地数据上训练 local_epochs 个 epoch
-        client_state_dicts = []
-        cut1, cut2 = select_cut_heuristic(cfg, )
-
-        for c_idx, client_loader in enumerate(client_loaders):
-            # 拷贝全局模型到客户端
-            client_model = deepcopy(backbone)
-            client_model.to(device)
-            client_model.train()
-
-            orchestrator = USFLOrchestrator(
-                backbone=client_model,
-                cut1=cut1,
-                cut2=cut2,
-                enable_profiling=True,
-                bytes_per_elem=bytes_per_elem,
-            )
-
-            optimizer_client = build_optimizer(cfg, client_model.parameters())
-
-            # 在客户端上做 local_epochs 次完整遍历
-            for le in range(1, local_epochs + 1):
-                for batch_idx, (x, y) in enumerate(client_loader):
-                    global_round_clients[c_idx] += 1  # 每处理一个 batch，客户端的全局轮计数加 1
-
-                    x = x.to(device, non_blocking=True)
-                    y = y.to(device, non_blocking=True)
-
-                    optimizer_client.zero_grad()
-
-                    logits, profiling = orchestrator.forward_three_segments(x)
-
-                    loss = criterion(logits, y)
-                    loss.backward()
-                    optimizer_client.step()
-
-                    # ------------------------------
-                    # 2.1 记录训练 metrics
-                    # ------------------------------
-                    metrics = {
-                        "acc": accuracy_score(
-                            y.cpu(), logits.argmax(dim=1).cpu()
-                        ),
-                        "loss": loss.item(),
-                    }
-
-                    # ------------------------------
-                    # 2.2 采样 A_front / x / y
-                    # ------------------------------
-                    if (
-                        privacy_enabled
-                        and priv_num_collected < max_priv_samples
-                    ):
-                        # StaticSplitUSFL 在 forward_three_segments 内部会更新 last_front_acts
-                        A_front = getattr(orchestrator, "last_front_acts", None)
-                        if A_front is not None:
-                            with torch.no_grad():
-                                A_front_cpu = A_front.detach().cpu()
-                                y_cpu = y.detach().cpu()
-                                x_cpu = x.detach().cpu() if store_x else None
-
-                                batch_size = A_front_cpu.size(0)
-                                remaining = max_priv_samples - priv_num_collected
-                                if remaining > 0:
-                                    if batch_size > remaining:
-                                        # 从当前 batch 随机抽样 remaining 个
-                                        idx = torch.randperm(batch_size)[:remaining]
-                                        A_front_cpu = A_front_cpu[idx]
-                                        y_cpu = y_cpu[idx]
-                                        if store_x:
-                                            x_cpu = x_cpu[idx]
-                                        taken = remaining
-                                    else:
-                                        taken = batch_size
-
-                                    priv_A_front_buf.append(A_front_cpu)
-                                    priv_y_buf.append(y_cpu)
-                                    if store_x and priv_x_buf is not None:
-                                        priv_x_buf.append(x_cpu)
-
-                                    priv_num_collected += taken
-
-                    # ---- logging ----
-                    if (global_round_clients[c_idx] % cfg.logging.log_interval) == 0:
-                        logger.log_train_round(
-                            client_idx=c_idx,
-                            global_round=global_round_clients[c_idx],
-                            epoch=epoch,
-                            batch_idx=batch_idx,
-                            metrics=metrics,
-                            profiling=profiling,
-                            net_sim=net_sim,
-                        )
-
-            # 本客户端本轮训练结束，收集 state_dict
-            client_state_dicts.append(
-                {k: v.cpu() for k, v in client_model.state_dict().items()}
-            )
-
-            # 清理显存
-            del client_model
-            del optimizer_client
-            torch.cuda.empty_cache()
-
-        # 本 epoch 所有客户端本地训练完成 -> 联邦服务器聚合（一次）
-        aggregated_state = aggregate(
-            client_state_dicts,
-            sample_counts=sample_counts,
-            method=cfg.usfl.aggregation,
-        )
-        backbone.load_state_dict(aggregated_state)
-        backbone.to(device)
-
-        # 聚合后在 epoch 级别额外评估一次全局模型
-        if val_loader is not None and (epoch % cfg.training.eval_every == 0):
-            val_stats = evaluate_backbone_on_val(
-                backbone,
-                val_loader,
-                device,
-                criterion,
-                average=average,
-                multi_class=multi_class,
-            )
-            logger.log_val_epoch(epoch=epoch, val_stats=val_stats)
-
-            print(
-                f"[USFL Train] Epoch {epoch}: Val Acc={val_stats['val_acc']:.4f}, "
-                f"Val Loss={val_stats['val_loss']:.4f}"
-            )
-
-            # ------ 保存 checkpoint ------
-            if epoch % cfg.training.save_every == 0:
-                # 确保保存到 CPU，防止之后 device 切换
-                state_dict_cpu = {k: v.cpu() for k, v in backbone.state_dict().items()}
-                torch.save(
-                    {
-                        "epoch": epoch,
-                        "state_dict": state_dict_cpu,
-                        "cuts": (cut1, cut2),
-                    },
-                    os.path.join(ckpt_dir, f"ckpt_epoch_{epoch}.pth"),
-                )
-                print(
-                    f"[ckpt] New backbone saved at epoch {epoch}"
-                )
-
-        backbone.to("cpu")
-
-    # ------------------------------
-    # 4. 训练结束：保存最后一版 backbone
-    # ------------------------------
-    state_dict_cpu = {k: v.cpu() for k, v in backbone.state_dict().items()}
-    torch.save(
-        {
-            "epoch": cfg.training.epochs,
-            "state_dict": state_dict_cpu,
-            "cuts": (cut1, cut2),
-            "best_val_acc": None
-        },
-        os.path.join(ckpt_dir, f"ckpt_last.pth"),
-    )
-    print(f"[ckpt] Last backbone saved")
-
-    # ------------------------------
-    # 5. 保存隐私评估所需的样本
-    # ------------------------------
-    if privacy_enabled and priv_num_collected > 0:
-        A_front_all = torch.cat(priv_A_front_buf, dim=0)
-        y_all = torch.cat(priv_y_buf, dim=0)
-        save_dict = {"A_front": A_front_all, "y": y_all}
-
-        if store_x and priv_x_buf is not None and len(priv_x_buf) > 0:
-            x_all = torch.cat(priv_x_buf, dim=0)
-            save_dict["x"] = x_all
-
-        priv_path = os.path.join(run_dir, "privacy_samples.pt")
-        torch.save(save_dict, priv_path)
-        print(
-            f"[privacy] Saved {A_front_all.size(0)} samples "
-            f"(store_x={store_x}) to {priv_path}"
-        )
-    elif privacy_enabled:
-        print("[privacy] Enabled but no samples were collected; nothing saved.")
-
-
-def train_linucb_usfl(
+def train_dynamic_usfl(
     cfg,
     backbone: USFLBackbone,
     train_loader: DataLoader,
@@ -663,17 +372,12 @@ def train_linucb_usfl(
     if privacy_enabled:
         max_priv_samples = int(getattr(privacy_aux, "max_samples", 5000)) if privacy_aux is not None else 5000
         store_x = bool(getattr(privacy_aux, "store_x", True)) if privacy_aux is not None else True
-        priv_A_front_buf: list[torch.Tensor] = []
-        priv_y_buf: list[torch.Tensor] = []
-        priv_x_buf: Optional[list[torch.Tensor]] = [] if store_x else None
-        priv_num_collected: int = 0
+        priv_bufs = {}
         print(f"[privacy] Sampling enabled: max_samples={max_priv_samples}, store_x={store_x}")
     else:
         max_priv_samples = 0
         store_x = False
-        priv_A_front_buf = None
-        priv_y_buf = None
-        priv_x_buf = None
+        priv_bufs = None
         priv_num_collected = 0
         print("[privacy] Sampling disabled.")
 
@@ -821,25 +525,25 @@ def train_linucb_usfl(
                                 x_cpu = x.detach().cpu() if store_x else None
 
                                 batch_size = A_front_cpu.size(0)
-                                remaining = max_priv_samples - priv_num_collected
+                                cut_key = f"cut_{cut1}_{cut2}"
+                                buf = priv_bufs.setdefault(cut_key, {"A": [], "y": [], "x": []})
+                                num_collected = sum(t.size(0) for t in buf["A"]) if len(buf["A"]) > 0 else 0
+                                remaining = max_priv_samples - int(num_collected)
                                 if remaining > 0:
                                     if batch_size > remaining:
-                                        # 从当前 batch 随机抽样 remaining 个
                                         idx = torch.randperm(batch_size)[:remaining]
                                         A_front_cpu = A_front_cpu[idx]
                                         y_cpu = y_cpu[idx]
                                         if store_x:
                                             x_cpu = x_cpu[idx]
-                                        taken = remaining
+                                        taken = int(remaining)
                                     else:
-                                        taken = batch_size
+                                        taken = int(batch_size)
 
-                                    priv_A_front_buf.append(A_front_cpu)
-                                    priv_y_buf.append(y_cpu)
-                                    if store_x and priv_x_buf is not None:
-                                        priv_x_buf.append(x_cpu)
-
-                                    priv_num_collected += taken
+                                    buf["A"].append(A_front_cpu)
+                                    buf["y"].append(y_cpu)
+                                    if store_x:
+                                        buf["x"].append(x_cpu)
 
                     # ---- logging ----
                     if (global_round_clients[c_idx] % cfg.logging.log_interval) == 0:
@@ -929,21 +633,25 @@ def train_linucb_usfl(
     # ------------------------------
     # 5. 保存隐私评估所需的样本
     # ------------------------------
-    if privacy_enabled and priv_num_collected > 0:
-        A_front_all = torch.cat(priv_A_front_buf, dim=0)
-        y_all = torch.cat(priv_y_buf, dim=0)
-        save_dict = {"A_front": A_front_all, "y": y_all}
+    if privacy_enabled and isinstance(priv_bufs, dict) and len(priv_bufs) > 0:
+        for cut_key, buf in priv_bufs.items():
+            try:
+                if not buf["A"]:
+                    continue
+                A_front_all = torch.cat(buf["A"], dim=0)
+                y_all = torch.cat(buf["y"], dim=0)
+                save_dict = {"A_front": A_front_all, "y": y_all}
+                if store_x and buf.get("x") and len(buf.get("x")) > 0:
+                    x_all = torch.cat(buf["x"], dim=0)
+                    save_dict["x"] = x_all
 
-        if store_x and priv_x_buf is not None and len(priv_x_buf) > 0:
-            x_all = torch.cat(priv_x_buf, dim=0)
-            save_dict["x"] = x_all
-
-        priv_path = os.path.join(run_dir, "privacy_samples.pt")
-        torch.save(save_dict, priv_path)
-        print(
-            f"[privacy] Saved {A_front_all.size(0)} samples "
-            f"(store_x={store_x}) to {priv_path}"
-        )
+                cut_dir = os.path.join(run_dir, cut_key)
+                os.makedirs(cut_dir, exist_ok=True)
+                priv_path = os.path.join(cut_dir, "privacy_samples.pt")
+                torch.save(save_dict, priv_path)
+                print(f"[privacy] Saved {A_front_all.size(0)} samples (cut={cut_key}, store_x={store_x}) to {priv_path}")
+            except Exception:
+                print(f"[privacy] Failed to save samples for {cut_key}")
     elif privacy_enabled:
         print("[privacy] Enabled but no samples were collected; nothing saved.")
 

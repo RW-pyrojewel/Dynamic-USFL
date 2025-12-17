@@ -55,9 +55,9 @@ def main():
     cut1, cut2 = select_static_cut(cfg)
     
     # 3. set seed
-    seed = getattr(cfg, "seed", 52)
-    set_seed(seed)
-    
+    seed = getattr(cfg, "seed", {"master": 42, "torch": 42})
+    set_seed(seed.master, seed.torch)
+
     # 4. build dataloaders
     train_loader, val_loader = build_dataloaders(cfg)
 

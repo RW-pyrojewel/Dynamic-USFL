@@ -78,7 +78,7 @@ def _create_labeled_loader(
         labeled_loader = aux_loader
     else:
         g = torch.Generator()
-        g.manual_seed(int(getattr(cfg, "seed", 0)))
+        g.manual_seed(int(getattr(cfg.seed, "master", 42)))
         idx = torch.randperm(aux_n, generator=g)[:desired_L].tolist()
         labeled_loader = DataLoader(
             Subset(aux_ds, idx),
