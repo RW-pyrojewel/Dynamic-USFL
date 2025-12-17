@@ -297,9 +297,10 @@ class MirrorDecoder(nn.Module):
                 cur_hw = target_hw
 
             elif rtype == "bn2d":
-                bn: nn.BatchNorm2d = rec["module"]
-                # mirror BN with same feature dim
-                inv_layers.append(nn.BatchNorm2d(bn.num_features))
+                # Use current decoder channel count to build BN to avoid
+                # running_mean/var size mismatch when channel ordering differs.
+                # Mirror behavior approximately by creating a BN with cur_c features.
+                inv_layers.append(nn.BatchNorm2d(cur_c))
 
             elif rtype == "relu":
                 inv_layers.append(nn.ReLU(inplace=False))

@@ -2,9 +2,12 @@
 /data
 __pycache__/
 *.pyc
-/logs/*/*
+/logs/*/*/*
+/logs/*/*.*
 !/logs/*/train_metrics.csv
 !/logs/*/val_metrics.csv
+!/logs/*/*/train_metrics.csv
+!/logs/*/*/val_metrics.csv
 !/logs/*/j_scores.csv
 !/logs/*/static_costs.csv
 !/logs/*/scales.csv
