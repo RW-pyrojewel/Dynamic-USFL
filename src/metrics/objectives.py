@@ -359,7 +359,7 @@ def compute_final_objective(
     return result
 
 
-def load_static_cost(cfg) -> Dict[CutPair, float]:
+def load_static_costs(cfg) -> Dict[CutPair, float]:
     """
     从配置中加载静态成本字典。
     返回一个字典，键为 (cut1, cut2) 元组，值为对应的静态成本。
@@ -368,7 +368,7 @@ def load_static_cost(cfg) -> Dict[CutPair, float]:
     if static_cost_csv is None:
         raise ValueError("Config must specify bandit.static_cost_csv for static cost USFL.")
     
-    static_cost = {}
+    static_costs = {}
     
     with open(static_cost_csv, "r") as f:
         reader = csv.DictReader(f)
@@ -377,10 +377,12 @@ def load_static_cost(cfg) -> Dict[CutPair, float]:
                 cut1 = int(row.get("cut1", 0))
                 cut2 = int(row.get("cut2", 0))
                 cost = float(row.get("static_cost", 0.0))
-                static_cost[(cut1, cut2)] = cost
+                static_costs[(cut1, cut2)] = cost
             except (TypeError, ValueError):
                 continue
-            static_cost[(cut1, cut2)] = cost
+            static_costs[(cut1, cut2)] = cost
+    
+    return static_costs
 
 
 def compute_dynamic_cost(

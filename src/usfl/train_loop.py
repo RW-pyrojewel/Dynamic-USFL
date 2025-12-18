@@ -17,7 +17,7 @@ import numpy as np
 from src.bandit.context import build_static_context_for_cut, profile_backbone_layers
 from src.bandit.linucb_dualcut import LinUCBDualCut, build_linucb_dualcut
 from src.metrics.logger import MetricsLogger
-from src.metrics.objectives import compute_dynamic_cost, load_static_cost
+from src.metrics.objectives import compute_dynamic_cost, load_static_costs
 from src.models.model_usfl import USFLBackbone
 from src.data.data_distribution import create_client_loaders
 from src.network.simulator import build_network_simulator
@@ -370,15 +370,16 @@ def train_dynamic_usfl(
     privacy_aux = getattr(privacy_cfg, "aux_dataset", None) if privacy_cfg is not None else None
 
     if privacy_enabled:
-        max_priv_samples = int(getattr(privacy_aux, "max_samples", 5000)) if privacy_aux is not None else 5000
+        max_priv_samples = int(getattr(privacy_aux, "max_samples", 1000)) if privacy_aux is not None else 1000
         store_x = bool(getattr(privacy_aux, "store_x", True)) if privacy_aux is not None else True
         priv_bufs = {}
+        priv_num_collected = {}
         print(f"[privacy] Sampling enabled: max_samples={max_priv_samples}, store_x={store_x}")
     else:
         max_priv_samples = 0
         store_x = False
         priv_bufs = None
-        priv_num_collected = 0
+        priv_num_collected = None
         print("[privacy] Sampling disabled.")
 
     # ------------------------------
@@ -413,11 +414,11 @@ def train_dynamic_usfl(
         for c2 in range(c1, len(backbone.layers) - 1):
             actions.append((c1, c2))
             context = build_static_context_for_cut(layer_profiles, c1, c2, batch_size, bytes_per_elem)
-            features[(c1, c2)] = np.array(context.values())
+            features[(c1, c2)] = np.array(list(context.values()))
     
-    static_cost = load_static_cost(cfg)
+    static_costs = load_static_costs(cfg)
     
-    linucb_dualcut = build_linucb_dualcut(cfg, actions, features, static_cost)
+    linucb_dualcut = build_linucb_dualcut(cfg, actions, features, static_costs)
     
     forced_sampling_interval = getattr(cfg.bandit, "forced_sampling_interval", 10) if hasattr(cfg, "bandit") else 10
     
@@ -465,7 +466,10 @@ def train_dynamic_usfl(
         forbidden_actions = [(c, c) for c in range(len(backbone.layers) - 1)] if epoch % forced_sampling_interval == 0 else []
         decision = linucb_dualcut.select_action(forbidden_actions)
         cut1, cut2 = decision.action
+        cut_key = f"cut_{cut1}_{cut2}"
         logger.log_bandit_decision(epoch, decision)
+        
+        print(f"[USFL Train] Epoch {epoch}: Selected cuts ({cut1}, {cut2}) via LinUCB with measured J={decision.j_hat:.6f}.")
 
         for c_idx, client_loader in enumerate(client_loaders):
             # 拷贝全局模型到客户端
@@ -514,7 +518,7 @@ def train_dynamic_usfl(
                     # ------------------------------
                     if (
                         privacy_enabled
-                        and priv_num_collected < max_priv_samples
+                        and getattr(priv_num_collected, cut_key, 0) < max_priv_samples
                     ):
                         # StaticSplitUSFL 在 forward_three_segments 内部会更新 last_front_acts
                         A_front = getattr(orchestrator, "last_front_acts", None)
@@ -525,10 +529,12 @@ def train_dynamic_usfl(
                                 x_cpu = x.detach().cpu() if store_x else None
 
                                 batch_size = A_front_cpu.size(0)
-                                cut_key = f"cut_{cut1}_{cut2}"
                                 buf = priv_bufs.setdefault(cut_key, {"A": [], "y": [], "x": []})
-                                num_collected = sum(t.size(0) for t in buf["A"]) if len(buf["A"]) > 0 else 0
-                                remaining = max_priv_samples - int(num_collected)
+                                
+                                if not hasattr(priv_num_collected, cut_key):
+                                    priv_num_collected[cut_key] = 0
+                                
+                                remaining = max_priv_samples - priv_num_collected[cut_key]
                                 if remaining > 0:
                                     if batch_size > remaining:
                                         idx = torch.randperm(batch_size)[:remaining]
@@ -544,6 +550,10 @@ def train_dynamic_usfl(
                                     buf["y"].append(y_cpu)
                                     if store_x:
                                         buf["x"].append(x_cpu)
+                                    
+                                    priv_num_collected[cut_key] += taken
+                                
+                                print(f"[privacy] Collected {priv_num_collected[cut_key]} / {max_priv_samples} samples for cut {cut_key}.")
 
                     # ---- logging ----
                     if (global_round_clients[c_idx] % cfg.logging.log_interval) == 0:

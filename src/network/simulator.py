@@ -273,8 +273,6 @@ def build_network_simulator(cfg: Any, num_clients: int) -> NetworkSimulator:
     seed = getattr(cfg.seed, "master", None)
     output_dir = getattr(cfg.experiment, "output_dir", ".")
     net_csv = getattr(cfg.logging, "net_csv", None) if hasattr(cfg, "logging") else None
-    
-    print(net_csv)
 
     if mode == "fixed":
         bw_up = float(getattr(net_cfg, "bw_up_mbps", 80.0))

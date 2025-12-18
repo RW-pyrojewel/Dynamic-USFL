@@ -1,0 +1,15 @@
+{
+  "acc_final": 0.7669,
+  "comm_total": 23827.023301611633,
+  "comp_total": 401.0341205652803,
+  "comp_client_total": 302.52976960502565,
+  "comp_server_total": 98.50435096025467,
+  "privacy_score": 0.3322485988604447,
+  "acc_cost": 0.23309999999999997,
+  "comm_cost": 1,
+  "comp_cost": 1,
+  "comp_cost_client": 1,
+  "comp_cost_server": 1,
+  "privacy_cost": 0.3322485988604447,
+  "J": 0.6413371497151111
+}

@@ -112,3 +112,8 @@ def main():
     print(f"Privacy score              : {result['privacy_score']:.4f}")
     print(f"J_global                   : {result['J']:.6f}")
     print(f"(detail saved to {os.path.join(output_dir, 'global_objective.json')})")
+
+
+if __name__ == "__main__":
+    main()
+    
