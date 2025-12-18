@@ -59,8 +59,8 @@ class USFLOrchestrator:
         # 在 cut1 / cut2 处截取 smashed data
         smashed1 = z_front.detach()
         smashed2 = z_middle.detach()
-        raw_prof["smashed1_numel"] = smashed1.numel()
-        raw_prof["smashed2_numel"] = smashed2.numel()
+        raw_prof["smashed1_numel"] = smashed1.numel() if self.cut1 != self.cut2 else 0
+        raw_prof["smashed2_numel"] = smashed2.numel() if self.cut1 != self.cut2 else 0
         raw_prof["cut_points"] = (self.cut1, self.cut2)
         
         # 供收集 smashed data 以及 smashed data's gradient 之用
@@ -71,7 +71,7 @@ class USFLOrchestrator:
         if self.timer is not None:
             times = self.timer.get_times()
             raw_prof["t_front"] = times.get("front", 0.0)
-            raw_prof["t_middle"] = times.get("middle", 0.0)
+            raw_prof["t_middle"] = times.get("middle", 0.0) if self.cut1 != self.cut2 else 0.0
             raw_prof["t_back"] = times.get("back", 0.0)
         else:
             raw_prof["t_front"] = 0.0

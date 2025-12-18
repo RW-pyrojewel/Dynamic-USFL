@@ -18,7 +18,7 @@ import os
 import torch
 
 from src.config.parser import load_config, parse_overrides
-from src.privacy.api import evaluate_privacy_for_cut
+from src.privacy.api import PrivacyResult, evaluate_privacy_for_cut
 from src.usfl.train_loop import train_dynamic_usfl
 
 from src.metrics.logger import MetricsLogger
@@ -92,7 +92,7 @@ def main():
                 cut1=cut1,
                 backbone_template=backbone,   # 仅用于“切结构”，内部会重置权重避免泄漏
                 device=cfg.training.device,
-            )
+            ) if cut1 != cut2 else PrivacyResult(P_label=0.0, P_sample=0.0, P_global=0.0)
             privacy_counts[cut_key] = privacy_res.P_global
             print(f"Privacy score for {cut_key}: {privacy_res.P_global:.4f}")
     privacy_score = sum(privacy_counts.values()) / len(privacy_counts)

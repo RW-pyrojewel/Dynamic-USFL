@@ -200,7 +200,7 @@ def train_static_usfl(
                     # 2.2 采样 A_front / x / y
                     # ------------------------------
                     if (
-                        privacy_enabled
+                        privacy_enabled and cut1 != cut2
                         and priv_num_collected < max_priv_samples
                     ):
                         # StaticSplitUSFL 在 forward_three_segments 内部会更新 last_front_acts
@@ -316,7 +316,7 @@ def train_static_usfl(
     # ------------------------------
     # 5. 保存隐私评估所需的样本
     # ------------------------------
-    if privacy_enabled and priv_num_collected > 0:
+    if privacy_enabled and cut1 != cut2 and priv_num_collected > 0:
         A_front_all = torch.cat(priv_A_front_buf, dim=0)
         y_all = torch.cat(priv_y_buf, dim=0)
         save_dict = {"A_front": A_front_all, "y": y_all}
@@ -517,7 +517,7 @@ def train_dynamic_usfl(
                     # 2.2 采样 A_front / x / y
                     # ------------------------------
                     if (
-                        privacy_enabled
+                        privacy_enabled and cut1 != cut2
                         and getattr(priv_num_collected, cut_key, 0) < max_priv_samples
                     ):
                         # StaticSplitUSFL 在 forward_three_segments 内部会更新 last_front_acts
