@@ -7,9 +7,9 @@
   "privacy_score": 0.3322485988604447,
   "acc_cost": 0.23309999999999997,
   "comm_cost": 1,
-  "comp_cost": 1,
-  "comp_cost_client": 1,
-  "comp_cost_server": 1,
+  "comp_cost": 0.24525206971970953,
+  "comp_cost_client": 0.1850118190513961,
+  "comp_cost_server": 0.06024025066831343,
   "privacy_cost": 0.3322485988604447,
-  "J": 0.6413371497151111
+  "J": 0.45265016714503853
 }

@@ -11,5 +11,6 @@ __pycache__/
 !/logs/*/j_scores.csv
 !/logs/*/static_costs.csv
 !/logs/*/scales.csv
+!/logs/*/network_conditions.csv
 !/logs/*/bandit_decisions.csv
 !/logs/*/global_objective.json
