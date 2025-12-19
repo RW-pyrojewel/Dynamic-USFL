@@ -273,7 +273,7 @@ class MirrorDecoder(nn.Module):
 
                 # mirror channels: out_channels -> in_channels
                 deconv = nn.ConvTranspose2d(
-                    in_channels=int(out_shape[1]),
+                    in_channels=int(cur_c),
                     out_channels=int(in_shape[1]),
                     kernel_size=conv.kernel_size,
                     stride=conv.stride,
