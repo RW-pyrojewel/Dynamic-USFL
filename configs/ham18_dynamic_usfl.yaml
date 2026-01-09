@@ -94,6 +94,8 @@ bandit:
   lambda_reg: 1.0                # LinUCB 算法中的正则化参数
   static_cost_csv: ./logs/ham18_offline_profiling/static_costs.csv  # 离线分析得到的静态开销文件
   forced_sampling_interval: 10    # 强制采样周期（每多少个 epoch 采样一次）
+  y_transform: log1p             # 对观测值 y 进行的变换：none / log1p / standardize
+  y_standardize: true            # 是否对观测值 y 进行标准化
 
 privacy:
   enable: true

@@ -14,7 +14,7 @@ from sklearn.metrics import (
 )
 import numpy as np
 
-from src.bandit.context import build_static_context_for_cut, profile_backbone_layers
+from src.bandit.context import build_context_table_for_actions, build_static_context_for_cut, profile_backbone_layers
 from src.bandit.linucb_dualcut import LinUCBDualCut, build_linucb_dualcut
 from src.metrics.logger import MetricsLogger
 from src.metrics.objectives import compute_dynamic_cost, load_static_costs
@@ -401,6 +401,10 @@ def train_dynamic_usfl(
     in_channels = int(getattr(cfg.model, "in_channels", 3) if hasattr(cfg, "model") else 3)
     batch_size = int(getattr(cfg.data, "batch_size", 64) if hasattr(cfg, "data") else 64)
     bytes_per_elem = int(getattr(cfg.data, "bytes_per_elem", 4) if hasattr(cfg, "data") else 4)
+    y_transform = str(getattr(cfg.bandit, "y_transform", "log1p")) if hasattr(cfg, "bandit") else "log1p"
+    y_standardize = bool(getattr(cfg.bandit, "y_standardize", True)) if hasattr(cfg, "bandit") else True
+    context_transform = str(getattr(cfg.bandit, "context_transform", "log1p_maxnorm")) if hasattr(cfg, "bandit") else "log1p_maxnorm"
+    context_bias = bool(getattr(cfg.bandit, "context_bias", True)) if hasattr(cfg, "bandit") else True
     
     layer_profiles = profile_backbone_layers(
         backbone=backbone,
@@ -408,17 +412,19 @@ def train_dynamic_usfl(
         in_channels=in_channels,
     )
     
-    actions = []
-    features = {}
-    for c1 in range(len(backbone.layers) - 1):
-        for c2 in range(c1, len(backbone.layers) - 1):
-            actions.append((c1, c2))
-            context = build_static_context_for_cut(layer_profiles, c1, c2, batch_size, bytes_per_elem)
-            features[(c1, c2)] = np.array(list(context.values()))
+    actions = [(c1, c2) for c1 in range(len(backbone.layers) - 1) for c2 in range(c1, len(backbone.layers) - 1)]
+    features = build_context_table_for_actions(
+        profiles=layer_profiles,
+        actions=actions,
+        batch_size=cfg.data.batch_size,
+        bytes_per_elem=cfg.data.bytes_per_elem,
+        transform=context_transform,
+        add_bias=context_bias,
+    )
     
     static_costs = load_static_costs(cfg)
     
-    linucb_dualcut = build_linucb_dualcut(cfg, actions, features, static_costs)
+    linucb_dualcut = build_linucb_dualcut(cfg, actions, features, static_costs, y_transform, y_standardize)
     
     forced_sampling_interval = getattr(cfg.bandit, "forced_sampling_interval", 10) if hasattr(cfg, "bandit") else 10
     

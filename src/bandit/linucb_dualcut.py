@@ -77,6 +77,8 @@ class LinUCBDualCut:
         static_costs: Mapping[CutPair, float],
         alpha: float = 1.0,
         lambda_reg: float = 1.0,
+        y_transform: str = "log1p",
+        y_standardize: bool = True,
     ) -> None:
         """
         Parameters
@@ -143,6 +145,38 @@ class LinUCBDualCut:
         # 记录更新轮次
         self.num_updates: int = 0
 
+    # ------------------------------------------------------------------
+    # 私有方法
+    # ------------------------------------------------------------------
+    def _update_running_stats(self, y: float) -> None:
+        self._y_n += 1
+        delta = y - self._y_mean
+        self._y_mean += delta / self._y_n
+        delta2 = y - self._y_mean
+        self._y_M2 += delta * delta2
+
+    def _y_std(self) -> float:
+        if self._y_n < 2:
+            return 1.0
+        var = self._y_M2 / (self._y_n - 1)
+        return float(np.sqrt(max(var, 1e-12)))
+
+    def _transform_y(self, y: float) -> float:
+        # 1) log transform
+        if self.y_transform == "log1p":
+            y = float(np.log1p(max(y, 0.0)))
+        else:
+            y = float(y)
+
+        # 2) standardize (use previous stats to avoid leakage)
+        if self.y_standardize and self._y_n >= 2:
+            y_std = self._y_std()
+            y = (y - self._y_mean) / y_std
+
+        # 3) update stats with unstandardized log y (recommended)
+        # NOTE: update with log1p(y_raw), not standardized y
+        return y
+    
     # ------------------------------------------------------------------
     # 公共接口
     # ------------------------------------------------------------------
@@ -241,7 +275,8 @@ class LinUCBDualCut:
                 continue
 
             d_hat, sigma = self.predict_dynamic_cost(a)
-            j_hat = self._static_costs[a] + d_hat - self.alpha * sigma
+            alpha_t = self.alpha / np.sqrt(max(1, self.num_updates))
+            j_hat = self._static_costs[a] + d_hat - alpha_t * sigma
 
             if j_hat < best_j_hat:
                 best_j_hat = j_hat
@@ -276,11 +311,21 @@ class LinUCBDualCut:
                 λ_comm * C_comm,t(d) + λ_comp * C_comp-edge,t(d)。
         """
         x = self._features[action]
-        y = float(dynamic_cost_observed)
+        y_raw = float(dynamic_cost_observed)
+        y_log = float(np.log1p(max(y_raw, 0.0)))
 
-        # A ← A + x x^T, b ← b + x y
+        # standardize using previous stats
+        if self.y_standardize and self._y_n >= 2:
+            y_used = (y_log - self._y_mean) / self._y_std()
+        else:
+            y_used = y_log
+
+        # update A,b with y_used
         self._A = self._A + np.outer(x, x)
-        self._b = self._b + x * y
+        self._b = self._b + x * y_used
+
+        # now update running stats with y_log (unstandardized)
+        self._update_running_stats(y_log)
 
         # 更新 A^{-1} 和 theta
         # 这里直接用逆矩阵，d_feat 很小（≈8），代价可以接受。
@@ -299,6 +344,8 @@ def build_linucb_dualcut(
     actions: Sequence[CutPair],
     features: Mapping[CutPair, np.ndarray],
     static_costs: Mapping[CutPair, float],
+    y_transform: str = "log1p",
+    y_standardize: bool = True,
 ) -> LinUCBDualCut:
     """
     使用配置文件构造 LinUCBDualCut 实例的辅助函数。
@@ -317,6 +364,10 @@ def build_linucb_dualcut(
         每个动作的特征向量 x_d。
     static_costs : Mapping[CutPair, float]
         每个动作的静态代价 S(d)。
+    y_transform : str, default "log1p"
+        对观测值 y 进行的变换：none / log1p。
+    y_standardize : bool, default True
+        是否对观测值 y 进行标准化。
 
     Returns
     -------
@@ -337,4 +388,6 @@ def build_linucb_dualcut(
         static_costs=static_costs,
         alpha=alpha,
         lambda_reg=lambda_reg,
+        y_transform=y_transform,
+        y_standardize=y_standardize,
     )

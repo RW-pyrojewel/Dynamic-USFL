@@ -1,7 +1,8 @@
 # src/graph/context.py
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, Iterable, List, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -216,3 +217,61 @@ def build_static_context_for_cut(
         "server_act_params": server_act_params,
     }
     return context
+
+
+def build_context_table_for_actions(
+    profiles: List[LayerProfile],
+    actions: Iterable[Tuple[int, int]],
+    batch_size: int,
+    bytes_per_elem: int,
+    transform: str = "log1p_maxnorm",
+    add_bias: bool = True,
+) -> Dict[Tuple[int, int], np.ndarray]:
+    """
+    Build normalized feature vectors x_d for all actions.
+    - transform="log1p_maxnorm": x <- log1p(x); then divide by max over actions (per-dim)
+    - add_bias: prepend 1.0
+
+    Returns: dict[(cut1,cut2)] -> np.ndarray shape (k,) or (k+1,)
+    """
+    actions = list(actions)
+    # raw context dicts
+    ctx_dicts: Dict[Tuple[int, int], Dict[str, float]] = {}
+    for (c1, c2) in actions:
+        ctx = build_static_context_for_cut(
+            profiles=profiles,
+            cut1=c1,
+            cut2=c2,
+            batch_size=batch_size,
+            bytes_per_elem=bytes_per_elem,
+        )
+        ctx_dicts[(c1, c2)] = ctx
+
+    # stable key order
+    keys = sorted(next(iter(ctx_dicts.values())).keys())
+
+    raw = np.stack(
+        [np.array([ctx_dicts[a][k] for k in keys], dtype=np.float64) for a in actions],
+        axis=0,
+    )
+
+    if transform == "log1p_maxnorm":
+        raw = np.log1p(np.maximum(raw, 0.0))
+        denom = np.max(raw, axis=0)
+        denom = np.where(denom <= 0.0, 1.0, denom)
+        raw = raw / denom
+    elif transform == "maxnorm":
+        denom = np.max(raw, axis=0)
+        denom = np.where(denom <= 0.0, 1.0, denom)
+        raw = raw / denom
+    else:
+        raise ValueError(f"Unknown transform: {transform}")
+
+    feats: Dict[Tuple[int, int], np.ndarray] = {}
+    for i, a in enumerate(actions):
+        v = raw[i]
+        if add_bias:
+            v = np.concatenate([np.ones(1, dtype=np.float64), v], axis=0)
+        feats[a] = v.astype(np.float64)
+
+    return feats
