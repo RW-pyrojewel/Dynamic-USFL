@@ -193,6 +193,9 @@ class NetworkSimulator:
 
         若你只模拟上行（split learning 常见），可以把 bytes_down 设成 0。
         """
+        if bytes_up == 0 and bytes_down == 0:
+            return 0.0
+        
         bw_up, bw_down, rtt_ms = self.sample_link(client_idx)
 
         bits_up = float(bytes_up) * 8.0
