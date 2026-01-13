@@ -101,7 +101,7 @@ privacy:
   enable: true
   aux_dataset:
     name: derm7pt               # ham10000 场景默认 derm7pt
-    root: ./data/derm7pt
+    root: ./data/Derm7pt_release_v0
     split: train                # official split / train
     num_workers: 4
     batch_size: 64

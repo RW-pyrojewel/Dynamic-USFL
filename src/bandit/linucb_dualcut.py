@@ -135,12 +135,19 @@ class LinUCBDualCut:
 
         self.alpha: float = float(alpha)
         self.lambda_reg: float = float(lambda_reg)
+        self.y_transform: str = y_transform
+        self.y_standardize: bool = bool(y_standardize)
 
         # LinUCB 状态：A, A_inv, b, theta
         self._A: np.ndarray = self.lambda_reg * np.eye(self.d_feat, dtype=np.float64)
         self._A_inv: np.ndarray = np.linalg.inv(self._A)
         self._b: np.ndarray = np.zeros(self.d_feat, dtype=np.float64)
         self._theta: np.ndarray = np.zeros(self.d_feat, dtype=np.float64)
+        
+        # 运行时状态：_y_n, _y_mean, _y_M2 用于在线计算 y 的均值和方差
+        self._y_n: int = 0
+        self._y_mean: float = 0.0
+        self._y_M2: float = 0.0
 
         # 记录更新轮次
         self.num_updates: int = 0
