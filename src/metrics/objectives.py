@@ -213,7 +213,7 @@ def count_per_epoch_latency_scale(cfg, cut_keys: List[str]) -> Dict[str, float]:
         if total["comp_max"] > comp_epoch_max:
             comp_epoch_max = total["comp_max"]
 
-        return {"comm_scale": comm_epoch_max, "comp_scale": comp_epoch_max}
+    return {"comm_scale": comm_epoch_max, "comp_scale": comp_epoch_max}
 
 
 def compute_final_objective(
@@ -296,10 +296,10 @@ def compute_final_objective(
         scales = _load_scales(scale_csv)
         s_comm = scales.get("comm_time_scale", 1.0) * epochs
         s_comp = scales.get("comp_time_scale", 1.0) * epochs
-        comm_cost = min(1, comm_total / (1e-6 + s_comm))
-        comp_cost = min(1, comp_total / (1e-6 + s_comp))
-        comp_cost_client = min(1, comp_client_total / (1e-6 + s_comp))
-        comp_cost_server = min(1, comp_server_total / (1e-6 + s_comp))
+        comm_cost = comm_total / (1e-6 + s_comm)
+        comp_cost = comp_total / (1e-6 + s_comp)
+        comp_cost_client = comp_client_total / (1e-6 + s_comp)
+        comp_cost_server = comp_server_total / (1e-6 + s_comp)
     elif normalize_method == "minmax":
         if comm_min is None or comm_max is None or comp_min is None or comp_max is None:
             raise ValueError("min_comm, max_comm, min_comp, max_comp must be provided for minmax normalization.")
@@ -419,8 +419,8 @@ def compute_dynamic_cost(
         return float("inf")
 
     # 归一化
-    comm_cost = min(1, epoch_latency["comm"] / (1e-6 + comm_scale))
-    comp_cost_server = min(1, epoch_latency["comp_server"] / (1e-6 + comp_scale))
+    comm_cost = epoch_latency["comm"] / (1e-6 + comm_scale)
+    comp_cost_server = epoch_latency["comp_server"] / (1e-6 + comp_scale)
     
     # 加权求动态代价
     obj_cfg = getattr(cfg, "objective", None)
