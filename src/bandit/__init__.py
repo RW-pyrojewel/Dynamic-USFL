@@ -15,7 +15,8 @@ from .linucb_dualcut import (
 
 from .context import (
     profile_backbone_layers,
-    build_static_context_for_cut
+    build_static_context_for_cut,
+    build_context_table_for_actions,
 )
 
 __all__ = [
@@ -25,4 +26,5 @@ __all__ = [
     "build_linucb_dualcut",
     "profile_backbone_layers",
     "build_static_context_for_cut",
+    "build_context_table_for_actions",
 ]

@@ -311,10 +311,10 @@ def compute_final_objective(
         scales = _load_scales(scale_csv)
         s_comm = scales.get("comm_time_scale", 1.0) * epochs
         s_comp = scales.get("comp_time_scale", 1.0) * epochs
-        comm_cost = np.log(1 + comm_total / (1e-6 + s_comm))
-        comp_cost = np.log(1 + comp_total / (1e-6 + s_comp))
-        comp_cost_client = np.log(1 + comp_client_total / (1e-6 + s_comp))
-        comp_cost_server = np.log(1 + comp_server_total / (1e-6 + s_comp))
+        comm_cost = np.log1p(comm_total / (1e-6 + s_comm))
+        comp_cost = np.log1p(comp_total / (1e-6 + s_comp))
+        comp_cost_client = np.log1p(comp_client_total / (1e-6 + s_comp))
+        comp_cost_server = np.log1p(comp_server_total / (1e-6 + s_comp))
     else:
         comm_cost = comm_total
         comp_cost = comp_total
