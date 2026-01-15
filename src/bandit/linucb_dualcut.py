@@ -208,12 +208,16 @@ class LinUCBDualCut:
         return self._b
 
     def reset(self) -> None:
-        """重置 LinUCB 内部状态（A, b, theta），但不改变 actions / features。"""
+        """重置 LinUCB 内部状态（A, b, theta）和运行时状态（_y_n, _y_mean, _y_M2），但不改变 actions / features。"""
         self._A = self.lambda_reg * np.eye(self.d_feat, dtype=np.float64)
         self._A_inv = np.linalg.inv(self._A)
         self._b = np.zeros(self.d_feat, dtype=np.float64)
         self._theta = np.zeros(self.d_feat, dtype=np.float64)
         self.num_updates = 0
+        self._y_n = 0
+        self._y_mean = 0.0
+        self._y_M2 = 0.0
+
 
     # ------------------------------------------------------------------
     # 核心算子：预测 / 选臂 / 更新
@@ -319,20 +323,14 @@ class LinUCBDualCut:
         """
         x = self._features[action]
         y_raw = float(dynamic_cost_observed)
-        y_log = float(np.log1p(max(y_raw, 0.0)))
-
-        # standardize using previous stats
-        if self.y_standardize and self._y_n >= 2:
-            y_used = (y_log - self._y_mean) / self._y_std()
-        else:
-            y_used = y_log
+        y = self._transform_y(y_raw)
 
         # update A,b with y_used
         self._A = self._A + np.outer(x, x)
-        self._b = self._b + x * y_used
+        self._b = self._b + x * y
 
         # now update running stats with y_log (unstandardized)
-        self._update_running_stats(y_log)
+        self._update_running_stats(float(np.log1p(max(y_raw, 0.0))) if self.y_transform == "log1p" else y_raw)
 
         # 更新 A^{-1} 和 theta
         # 这里直接用逆矩阵，d_feat 很小（≈8），代价可以接受。
