@@ -4,6 +4,8 @@ import json
 import os
 from typing import Dict, List, Optional
 
+import numpy as np
+
 from src.bandit.linucb_dualcut import CutPair
 
 
@@ -305,6 +307,14 @@ def compute_final_objective(
         comp_cost = (comp_total - comp_min) / max(1e-6, (comp_max - comp_min))
         comp_cost_client = comp_cost * (comp_client_total / comp_total) if comp_total > 0 else 0.0
         comp_cost_server = comp_cost * (comp_server_total / comp_total) if comp_total > 0 else 0.0
+    elif normalize_method == "log-ratio":
+        scales = _load_scales(scale_csv)
+        s_comm = scales.get("comm_time_scale", 1.0) * epochs
+        s_comp = scales.get("comp_time_scale", 1.0) * epochs
+        comm_cost = np.log(1 + comm_total / (1e-6 + s_comm))
+        comp_cost = np.log(1 + comp_total / (1e-6 + s_comp))
+        comp_cost_client = np.log(1 + comp_client_total / (1e-6 + s_comp))
+        comp_cost_server = np.log(1 + comp_server_total / (1e-6 + s_comp))
     else:
         comm_cost = comm_total
         comp_cost = comp_total

@@ -137,5 +137,5 @@ objective:
     comm: 1
     comp: 1
     privacy: 1
-  normalize_method: scale        # 默认缩放
+  normalize_method: log-ratio # 对数比率归一化
   scale_csv: ./logs/ham18_offline_profiling/scales.csv
