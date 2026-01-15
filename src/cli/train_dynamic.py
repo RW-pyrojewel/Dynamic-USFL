@@ -14,6 +14,8 @@ With overrides:
 
 import argparse
 import os
+import csv
+from collections import Counter
 
 import torch
 
@@ -95,7 +97,45 @@ def main():
             ) if cut1 != cut2 else PrivacyResult(P_label=0.0, P_sample=0.0, P_global=0.0)
             privacy_counts[cut_key] = privacy_res.P_global
             print(f"Privacy score for {cut_key}: {privacy_res.P_global:.4f}")
-    privacy_score = sum(privacy_counts.values()) / len(privacy_counts)
+
+    # Compute weighted privacy score using bandit decisions counts
+    # bandit CSV path is stored relative to output_dir at cfg.logging.bandit_csv
+    bandit_counts = Counter()
+    bandit_csv_rel = getattr(getattr(cfg, 'logging', None), 'bandit_csv', None)
+    total_weight = 0
+    if bandit_csv_rel:
+        bandit_csv_path = os.path.join(output_dir, bandit_csv_rel)
+        if os.path.exists(bandit_csv_path):
+            try:
+                with open(bandit_csv_path, newline='') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        try:
+                            c1 = int(row.get('chosen_cut1', ''))
+                            c2 = int(row.get('chosen_cut2', ''))
+                        except Exception:
+                            # skip rows with invalid ints
+                            continue
+                        key = f"cut_{c1}_{c2}"
+                        bandit_counts[key] += 1
+                        total_weight += 1
+            except Exception:
+                bandit_counts = Counter()
+
+    # If we have counts, compute weighted average over privacy_counts keys
+    if bandit_counts:
+        weighted_sum = 0.0
+        for k, v in privacy_counts.items():
+            w = bandit_counts.get(k, 0)
+            weighted_sum += v * w
+        # If none of the evaluated cuts appear in bandit file, fall back to simple mean
+        if total_weight > 0:
+            privacy_score = weighted_sum / total_weight
+        else:
+            privacy_score = sum(privacy_counts.values()) / len(privacy_counts) if privacy_counts else 0.0
+    else:
+        # fallback to uniform average when bandit CSV missing or unreadable
+        privacy_score = sum(privacy_counts.values()) / len(privacy_counts) if privacy_counts else 0.0
     
     result = compute_final_objective(
         cfg, 
