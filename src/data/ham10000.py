@@ -1,138 +1,159 @@
-# src/data/ham10000.py
-from glob import glob
+from __future__ import annotations
+
+import csv
 import os
-from typing import Tuple, Optional
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import pandas as pd
 from PIL import Image
+from torch.utils.data import DataLoader, Dataset
 
-import torch
-from torch.utils.data import Dataset, DataLoader, random_split
-
+from src.data.splits import (
+    get_default_r_aux,
+    get_default_train_val_split,
+    get_split_seed,
+    two_stage_split_indices,
+)
+from src.data.subset import TransformedSubset
 from src.data.transforms import build_transforms
 
 
-HAM_LABELS = ["akiec", "bcc", "bkl", "df", "mel", "nv", "vasc"]
-LABEL2IDX = {l: i for i, l in enumerate(HAM_LABELS)}
+@dataclass(frozen=True)
+class HAMRecord:
+    path: str
+    label: int
 
 
 class HAM10000Dataset(Dataset):
-    """
-    HAM10000 dataset loader.
+    """HAM10000 classification dataset loader.
 
-    Expected structure (typical):
+    Expected layout (flexible):
       root/
         HAM10000_metadata.csv
-        images/
-          ISIC_0027419.jpg
-          ...
+        (one or more image folders, e.g.)
+        HAM10000_images_part_1/*.jpg
+        HAM10000_images_part_2/*.jpg
 
-    CSV minimal columns:
-      - image_id (or "image" / "image_id")
-      - dx (label)
+    The metadata CSV must contain at least:
+      - image_id : string (filename stem)
+      - dx       : class label string
     """
 
-    def __init__(
-        self,
-        root: str,
-        split: str = "train",
-        transform=None,
-        metadata_csv: Optional[str] = None,
-        image_dir: Optional[str] = None,
-        label_col: str = "dx",
-        id_col: str = "image_id",
-    ):
-        super().__init__()
-        self.root = root
-        self.split = split
-        self.transform = transform
+    def __init__(self, root: str, metadata_csv: Optional[str] = None) -> None:
+        self.root = Path(root)
+        self.metadata_csv = Path(metadata_csv) if metadata_csv is not None else self.root / "HAM10000_metadata.csv"
+        if not self.metadata_csv.exists():
+            raise FileNotFoundError(
+                f"HAM10000 metadata CSV not found: {self.metadata_csv}. "
+                f"Please set cfg.data.metadata_csv or place HAM10000_metadata.csv under cfg.data.root."
+            )
 
-        # resolve paths
-        if metadata_csv is None:
-            metadata_csv = os.path.join(root, "HAM10000_metadata.csv")
-        if image_dir is None:
-            image_dir = os.path.join(root, "HAM10000_images_part_*")
+        id_to_path = self._index_images(self.root)
 
-        if not os.path.isfile(metadata_csv):
-            raise FileNotFoundError(f"Metadata CSV not found: {metadata_csv}")
-        if not glob(image_dir):
-            raise FileNotFoundError(f"Image dir not found: {image_dir}")
+        rows = self._read_metadata(self.metadata_csv)
+        dx_labels = sorted({r["dx"] for r in rows})
+        self.classes = dx_labels
+        self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
 
-        df = pd.read_csv(metadata_csv)
+        records: List[HAMRecord] = []
+        missing = 0
+        for r in rows:
+            image_id = r["image_id"]
+            dx = r["dx"]
+            p = id_to_path.get(image_id)
+            if p is None:
+                missing += 1
+                continue
+            records.append(HAMRecord(path=p, label=self.class_to_idx[dx]))
 
-        # basic checks
-        if id_col not in df.columns:
-            raise KeyError(f"ID column '{id_col}' not found in CSV.")
-        if label_col not in df.columns:
-            raise KeyError(f"Label column '{label_col}' not found in CSV.")
+        if len(records) == 0:
+            raise RuntimeError(
+                "No HAM10000 images matched metadata. "
+                "Check that image filenames match metadata image_id and are under cfg.data.root."
+            )
+        if missing > 0:
+            # Soft warning via exception message is too aggressive; keep as meta info.
+            # Users can inspect dataset length to notice mismatch.
+            pass
 
-        # store paths / labels
-        self.image_ids = df[id_col].astype(str).tolist()
-        raw_labels = df[label_col].astype(str).tolist()
+        self.records = records
 
-        self.labels = [LABEL2IDX.get(l, -1) for l in raw_labels]
-        if any(l == -1 for l in self.labels):
-            unknown = sorted(set([raw_labels[i] for i, l in enumerate(self.labels) if l == -1]))
-            raise ValueError(f"Unknown labels found in CSV: {unknown}.\n"
-                             f"Please update HAM_LABELS / LABEL2IDX.")
+    @staticmethod
+    def _read_metadata(csv_path: Path) -> List[Dict[str, str]]:
+        with csv_path.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            required = {"image_id", "dx"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                raise ValueError(
+                    f"HAM10000 metadata CSV must contain columns {sorted(required)}; got {reader.fieldnames}"
+                )
+            return [row for row in reader]
 
-        self.image_dir = image_dir
+    @staticmethod
+    def _index_images(root: Path) -> Dict[str, str]:
+        """Index images by filename stem under root."""
+        exts = {".jpg", ".jpeg", ".png"}
+        mapping: Dict[str, str] = {}
+        for dirpath, _, filenames in os.walk(root):
+            for fn in filenames:
+                ext = Path(fn).suffix.lower()
+                if ext not in exts:
+                    continue
+                stem = Path(fn).stem
+                # Keep the first occurrence; dataset should not contain duplicates.
+                if stem not in mapping:
+                    mapping[stem] = str(Path(dirpath) / fn)
+        return mapping
 
-    def __len__(self):
-        return len(self.image_ids)
+    def __len__(self) -> int:
+        return len(self.records)
 
-    def _resolve_img_path(self, image_id: str) -> str:
-        ext = '.jpg'
-        for base in glob(self.image_dir):
-            p = os.path.join(base, image_id + ext)
-            if os.path.isfile(p):
-                return p
-            # 最后兜底：直接当 full name
-            p = os.path.join(base, image_id)
-            if os.path.isfile(p):
-                return p
-        raise FileNotFoundError(f"Image file not found for id={image_id}")
+    def __getitem__(self, idx: int) -> Tuple[Image.Image, int]:
+        rec = self.records[idx]
+        img = Image.open(rec.path).convert("RGB")
+        return img, rec.label
 
-    def __getitem__(self, idx):
-        image_id = self.image_ids[idx]
-        label = self.labels[idx]
-        img_path = self._resolve_img_path(image_id)
 
-        img = Image.open(img_path).convert("RGB")
-        if self.transform is not None:
-            img = self.transform(img)
+def build_ham10000_datasets(cfg) -> Dict[str, object]:
+    """Build HAM10000 datasets using deterministic aux/train/val splitting."""
+    root = cfg.data.root
+    metadata_csv = getattr(cfg.data, "metadata_csv", None)
 
-        return img, label
+    train_tfm, val_tfm = build_transforms(cfg)
+    base = HAM10000Dataset(root=root, metadata_csv=metadata_csv)
+
+    seed = get_split_seed(cfg)
+    r_aux = get_default_r_aux(cfg)
+    train_ratio, val_ratio = get_default_train_val_split(cfg)
+
+    split = two_stage_split_indices(
+        total=len(base),
+        r_aux=r_aux,
+        train_val_split=(train_ratio, val_ratio),
+        seed=seed,
+    )
+
+    return {
+        "train": TransformedSubset(base, split.train, transform=train_tfm),
+        "val": TransformedSubset(base, split.val, transform=val_tfm),
+        "aux": TransformedSubset(base, split.aux, transform=val_tfm),
+        "meta": {
+            "r_aux": r_aux,
+            "seed": seed,
+            "train_val_split": (train_ratio, val_ratio),
+            "classes": base.classes,
+        },
+    }
 
 
 def build_ham10000_dataloaders(cfg) -> Tuple[DataLoader, DataLoader]:
-    """
-    Build train/val DataLoaders for HAM10000 using cfg.data.
-    """
-    root = cfg.data.root
     batch_size = cfg.data.batch_size
     num_workers = getattr(cfg.data, "num_workers", 4)
-    split_ratio = getattr(cfg.data, "train_val_split", [0.8, 0.2])
-    seed = getattr(cfg.seed, "master", 42)
 
-    train_tfm, val_tfm = build_transforms(cfg)
-
-    full_ds = HAM10000Dataset(
-        root=root,
-        split="full",
-        transform=None,  # split 后再分别设置
-    )
-
-    n_total = len(full_ds)
-    n_train = int(n_total * split_ratio[0])
-    n_val = n_total - n_train
-
-    g = torch.Generator().manual_seed(seed)
-    train_ds, val_ds = random_split(full_ds, [n_train, n_val], generator=g)
-
-    # 给 split 后的 subset 赋 transform
-    train_ds.dataset.transform = train_tfm
-    val_ds.dataset.transform = val_tfm
+    ds = build_ham10000_datasets(cfg)
+    train_ds = ds["train"]
+    val_ds = ds["val"]
 
     train_loader = DataLoader(
         train_ds,
@@ -150,5 +171,20 @@ def build_ham10000_dataloaders(cfg) -> Tuple[DataLoader, DataLoader]:
         pin_memory=True,
         drop_last=False,
     )
-
     return train_loader, val_loader
+
+
+def build_ham10000_aux_dataloader(cfg) -> DataLoader:
+    aux_cfg = getattr(getattr(cfg, "privacy", object()), "aux_dataset", object())
+    batch_size = getattr(aux_cfg, "batch_size", 64)
+    num_workers = getattr(aux_cfg, "num_workers", getattr(cfg.data, "num_workers", 4))
+
+    ds = build_ham10000_datasets(cfg)["aux"]
+    return DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
