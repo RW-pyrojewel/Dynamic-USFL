@@ -30,6 +30,7 @@ def build_optimizer(cfg, params):
     # 配置可能来自 YAML/命令行，类型可能为字符串——强制转为数值以避免类型错误
     lr = float(getattr(cfg.optimizer, "lr", 0.0))
     momentum = float(getattr(cfg.optimizer, "momentum", 0.0))
+    nesterov = bool(getattr(cfg.optimizer, "nesterov", False))
     weight_decay = float(getattr(cfg.optimizer, "weight_decay", 0.0))
 
     if opt_type == "sgd":
@@ -37,6 +38,7 @@ def build_optimizer(cfg, params):
             params,
             lr=lr,
             momentum=momentum,
+            nesterov=nesterov,
             weight_decay=weight_decay,
         )
     elif opt_type == "adam":

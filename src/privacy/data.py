@@ -5,15 +5,15 @@ from typing import Optional
 
 import os
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from .config import PrivacyConfig
 
 
 @dataclass
 class VictimBatch:
-    A_front: torch.Tensor           # [N, ...]
-    y: torch.Tensor                 # [N]
+    A_front: torch.Tensor             # [N, ...]
+    y: torch.Tensor                   # [N]
     x: Optional[torch.Tensor] = None  # [N, C, H, W] or None
 
     @property
@@ -21,13 +21,92 @@ class VictimBatch:
         return int(self.A_front.shape[0])
 
 
+def _get_seed(cfg, default: int = 42) -> int:
+    """Best-effort seed extraction (kept local to avoid extra deps)."""
+    for key in (("seed", "torch"), ("seed", "master")):
+        cur = cfg
+        ok = True
+        for k in key:
+            if hasattr(cur, k):
+                cur = getattr(cur, k)
+            elif isinstance(cur, dict) and k in cur:
+                cur = cur[k]
+            else:
+                ok = False
+                break
+        if ok and isinstance(cur, int):
+            return int(cur)
+    return int(default)
+
+
+def _maybe_limit_dataset(ds, max_samples: Optional[int], seed: int):
+    """Limit dataset size deterministically if max_samples is set."""
+    if max_samples is None:
+        return ds
+    try:
+        max_samples = int(max_samples)
+    except Exception:
+        return ds
+    if max_samples <= 0:
+        return ds
+    n = len(ds)
+    if n <= max_samples:
+        return ds
+
+    g = torch.Generator()
+    g.manual_seed(int(seed))
+    idx = torch.randperm(n, generator=g)[:max_samples].tolist()
+    return Subset(ds, idx)
+
+
 def build_aux_loader(cfg, priv_cfg: PrivacyConfig) -> DataLoader:
     """
     构建辅助数据集的 DataLoader，输入的是 (x_aux, y_aux) 原始样本。
-    具体数据集与 label 映射由各自的数据模块负责。
+
+    兼容两种来源：
+      (A) 规律挖掘实验（fixed-ratio aux split）：
+          - aux 数据来自 *与 victim 同域的数据集*，按 r_aux 固定比例划分（seed.torch 固定）
+          - 直接复用 src.data 的 build_aux_dataloader(cfg)
+      (B) 历史兼容（外部 aux 数据集）：
+          - 例如 derm7pt / cinic10，仍沿用原有各自的数据模块构建函数
+
+    说明：
+      - 不改变本函数接口；
+      - 当 priv_cfg.aux.name 与 cfg.data.dataset 相同时，会优先走 (A)；
+      - 否则退回 (B)。
     """
     name = priv_cfg.aux.name.lower()
+    main_name = getattr(getattr(cfg, "data", object()), "dataset", "").lower()
 
+    # ---------- (A) Fixed-ratio aux split: delegate to src.data ----------
+    try:
+        from src.data import build_aux_dataloader as _build_aux_dataloader
+    except Exception:
+        _build_aux_dataloader = None
+
+    if _build_aux_dataloader is not None and name == main_name:
+        loader = _build_aux_dataloader(cfg)
+
+        # Optional deterministic truncation (per-cut max_samples)
+        seed = _get_seed(cfg)
+        max_samples = priv_cfg.aux.max_samples
+        ds = _maybe_limit_dataset(loader.dataset, max_samples=max_samples, seed=seed + 12345)
+
+        if ds is loader.dataset:
+            return loader
+
+        batch_size = priv_cfg.aux.batch_size
+        num_workers = priv_cfg.aux.num_workers
+        return DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=True,
+            drop_last=True,
+        )
+
+    # ---------- (B) Legacy external aux datasets ----------
     if name == "derm7pt":
         from src.data.derm7pt import build_derm7pt_dataloader
 
@@ -40,6 +119,7 @@ def build_aux_loader(cfg, priv_cfg: PrivacyConfig) -> DataLoader:
             shuffle=True,
         )
         return loader
+
     if name == "cinic10":
         from src.data.cinic10 import build_cinic10_dataloader
 
@@ -53,7 +133,11 @@ def build_aux_loader(cfg, priv_cfg: PrivacyConfig) -> DataLoader:
         )
         return loader
 
-    raise NotImplementedError(f"Aux dataset '{name}' is not implemented in privacy.data.")
+    raise NotImplementedError(
+        f"Aux dataset '{name}' is not implemented in privacy.data. "
+        f"Supported ratio-split datasets: cifar10/ham10000/eurosat/neu; "
+        f"legacy datasets: derm7pt/cinic10."
+    )
 
 
 def load_victim_batch(

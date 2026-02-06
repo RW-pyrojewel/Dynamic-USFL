@@ -1,4 +1,4 @@
-# src/cli/offline_profiling.py
+# src/cli/pattern_mining.py
 
 import argparse
 import csv

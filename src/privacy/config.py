@@ -13,6 +13,7 @@ class AuxDatasetConfig:
     split: str
     batch_size: int
     num_workers: int
+    max_samples: int
 
 
 @dataclass
@@ -111,6 +112,7 @@ def get_privacy_cfg(cfg) -> PrivacyConfig:
         split=str(_get(aux_ns, "split", "train")),
         batch_size=int(_get(aux_ns, "batch_size", 64)),
         num_workers=int(_get(aux_ns, "num_workers", 4)),
+        max_samples=int(_get(aux_ns, "max_samples", -1)),  # -1 means no limit
     )
 
     mixmatch = MixMatchConfig(

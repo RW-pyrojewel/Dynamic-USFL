@@ -1,0 +1,129 @@
+# configs/euro_mbv2_pattern_mining.yaml
+
+experiment:
+  name: euro_mbv2_pattern_mining
+  output_dir: ./logs/euro_mbv2_pattern_mining
+
+seed:
+  master: 42
+  torch: 42
+
+data:
+  dataset: eurosat
+  root: ./data/EuroSAT
+  num_classes: 10
+  img_size: 64
+  train_val_split: [0.9, 0.1]
+  num_workers: 4
+  batch_size: 128
+  bytes_per_elem: 4
+  augmentation:
+    random_crop: true
+    random_crop_padding: 4
+    random_horizontal_flip: true
+    color_jitter: false
+  iid: true
+
+model:
+  backbone: mobilenetv2
+  pretrained: true
+  in_channels: 3
+
+usfl:
+  mode: mining
+  num_clients: 5
+  local_steps: 1
+  aggregation: fedavg
+  split:
+    frontend_cut_range: [0, 5]
+    backend_cut_range: [0, 5]
+
+training:
+  device: cuda
+  epochs: 100
+  mixed_precision: true
+  grad_clip: 5.0
+  eval_every: 1
+  save_every: 10
+
+simulation:
+  comm:
+    mode: fixed
+    bw_up_mbps: 80.0
+    bw_down_mbps: 80.0
+    rtt_ms: 10.0
+    temporal_corr: 0.0
+    jitter_std: 0.0
+  comp:
+    kappa_client: 10
+    kappa_server: 1
+
+optimizer:
+  type: sgd
+  lr: 0.01
+  momentum: 0.9
+  nesterov: true
+  weight_decay: 1.0e-4
+metrics:
+  average: macro
+  multi_class: ovr
+
+logging:
+  log_interval: 1
+  save_checkpoints: true
+  tensorboard: true
+  train_csv: train_metrics.csv
+  val_csv: val_metrics.csv
+  j_score_csv: j_scores.csv
+  static_cost_csv: static_costs.csv
+  feature_csv: features.csv
+  scale_csv: scales.csv
+
+privacy:
+  enable: true
+  aux_dataset:
+    name: eurosat
+    root: ./data/EuroSAT
+    split: aux
+    r_aux: 0.2
+    num_workers: 4
+    batch_size: 64
+    max_samples: 6000   # 每个 cut 最多采样多少个样本（若 aux 更小则按实际）
+    store_x: true                    # 是否同时保存原始图像 x（MIA 需要）
+  sae:                               # SAE-SL / SAE-USL 攻击器配置
+    enable_lia: true
+    enable_mia: true
+    weight_lia: 0.5                  # P_global = w_l * P_label + w_s * P_sample
+    weight_mia: 0.5
+    lambda_lia: 1.0                  # 多任务训练中的 CE 权重
+    lambda_mia: 1.0                  # 多任务训练中的重建损失权重
+    lia_algorithm: mix-match
+    force_retrain: false
+    epochs: 20
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
+    mixmatch:
+      labeled_fraction: 0.1
+      T: 0.5
+      alpha: 0.75
+      lambda_u: 75.0
+      use_augmentation: true         # 如需更贴 Fu 的 “customized no-aug”，设 false
+    patience: 5
+    lia_hidden_dim: 256
+    lia_dropout: 0.0
+    save_attacker_ckpt: true
+    decoder_channel_min: 32
+    decoder_out_act: sigmoid
+  metrics:
+    lia_to_priv: auc_identity        # 先用 P_label = AUC
+    mia_metric: mse                  # 重建质量指标类型：mse / psnr / ssim（先用 mse）
+    mia_scale: 1.0                   # 将质量映射到 [0,1] 时的缩放，先占位
+
+objective:
+  acc_mode: final
+  weights:
+    acc_cost: 1
+    comm: 1
+    comp: 1
+    privacy: 1
+  normalize_method: minmax

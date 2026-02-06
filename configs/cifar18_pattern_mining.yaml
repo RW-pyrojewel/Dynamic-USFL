@@ -1,0 +1,134 @@
+# configs/cifar18_pattern_mining.yaml
+# Pattern-mining (规律挖掘) configuration for CIFAR-10 + ResNet-18
+
+experiment:
+  name: cifar18_pattern_mining
+  output_dir: ./logs/cifar18_pattern_mining
+
+seed:
+  master: 42
+  torch: 42
+
+data:
+  dataset: cifar10
+  root: ./data/CIFAR-10
+  num_classes: 10
+  img_size: 32
+  train_val_split: [0.9, 0.1]
+  num_workers: 4
+  batch_size: 256
+  bytes_per_elem: 4
+  augmentation:
+    random_crop: true
+    random_crop_padding: 4
+    random_horizontal_flip: true
+    color_jitter: false
+  iid: true
+
+model:
+  backbone: resnet18
+  pretrained: false
+  in_channels: 3
+
+usfl:
+  mode: mining
+  num_clients: 5
+  local_steps: 1
+  aggregation: fedavg
+  split:
+    frontend_cut_range: [0, 5]
+    backend_cut_range: [0, 5]
+
+training:
+  device: cuda
+  epochs: 200
+  mixed_precision: true
+  grad_clip: 5.0
+  eval_every: 1
+  save_every: 10
+
+simulation:
+  comm:
+    mode: fixed
+    bw_up_mbps: 80.0
+    bw_down_mbps: 80.0
+    rtt_ms: 10.0
+    temporal_corr: 0.0
+    jitter_std: 0.0
+  comp:
+    kappa_client: 10
+    kappa_server: 1
+
+optimizer:
+  type: adam
+  lr: 0.001
+  weight_decay: 0.0
+
+metrics:
+  average: macro
+  multi_class: ovr
+
+logging:
+  log_interval: 1
+  save_checkpoints: true
+  tensorboard: true
+  train_csv: train_metrics.csv
+  val_csv: val_metrics.csv
+  j_score_csv: j_scores.csv
+  static_cost_csv: static_costs.csv
+  feature_csv: features.csv
+  scale_csv: scales.csv
+
+privacy:
+  enable: true
+
+  # Same-domain auxiliary split (r_aux=0.2) from CIFAR-10 train pool, deterministic by seed.torch.
+  # Fields like 'root/split' are kept for compatibility, but src.data builds aux from cfg.data.* by design.
+  aux_dataset:
+    name: cifar10
+    root: ./data/CIFAR-10
+    split: aux
+    r_aux: 0.2
+    num_workers: 4
+    batch_size: 64
+    max_samples: 10000          # CIFAR-10 train pool is 50k; aux is 10k under r_aux=0.2
+    store_x: true               # MIA needs original x
+
+  sae:
+    enable_lia: true
+    enable_mia: true
+    weight_lia: 0.5
+    weight_mia: 0.5
+    lambda_lia: 1.0
+    lambda_mia: 1.0
+    lia_algorithm: mix-match
+    force_retrain: false
+    epochs: 20
+    lr: 1.0e-3
+    weight_decay: 1.0e-4
+    mixmatch:
+      labeled_fraction: 0.1
+      T: 0.5
+      alpha: 0.75
+      lambda_u: 75.0
+      use_augmentation: true
+    patience: 5
+    lia_hidden_dim: 256
+    lia_dropout: 0.0
+    save_attacker_ckpt: true
+    decoder_channel_min: 32
+    decoder_out_act: sigmoid
+
+  metrics:
+    lia_to_priv: auc_identity
+    mia_metric: mse
+    mia_scale: 1.0
+
+objective:
+  acc_mode: final
+  weights:
+    acc_cost: 1
+    comm: 1
+    comp: 1
+    privacy: 1
+  normalize_method: minmax

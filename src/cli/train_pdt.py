@@ -22,7 +22,8 @@ from src.usfl.train_loop import train_static_usfl
 
 from src.metrics.logger import MetricsLogger
 from src.metrics.objectives import compute_final_objective
-from src.utils.builder import build_backbone, build_dataloaders
+from src.data.factory import build_dataloaders
+from src.models.factory import build_backbone
 from src.utils.seed import set_seed
 
 
