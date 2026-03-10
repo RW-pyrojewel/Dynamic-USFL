@@ -21,7 +21,7 @@ from .models import (
     ShadowEncoder,
     LabelHead,
     MirrorDecoder,
-    SAESLAttacker,
+    SAEUSLAttacker,
     build_front_template_from_backbone,
 )
 
@@ -176,9 +176,9 @@ def build_attacker_for_cut(
     cut1: int,
     victim_batch: VictimBatch,
     device: str,
-) -> SAESLAttacker:
+) -> SAEUSLAttacker:
     """
-    Build SAE-SL attacker aligned with victim f1 architecture (structure only).
+    Build SAE-USL attacker aligned with victim f1 architecture (structure only).
     """
     img_shape = _infer_img_shape_from_cfg(cfg)
     z_spec = LatentSpec.from_tensor(victim_batch.A_front)
@@ -202,7 +202,7 @@ def build_attacker_for_cut(
         out_act=priv_cfg.sae.decoder_out_act,
     ).to(device)
 
-    return SAESLAttacker(encoder=encoder, label_head=label_head, decoder=decoder).to(device)
+    return SAEUSLAttacker(encoder=encoder, label_head=label_head, decoder=decoder).to(device)
 
 
 def train_or_load_sae_attacker(
@@ -214,9 +214,9 @@ def train_or_load_sae_attacker(
     victim_batch: VictimBatch,
     aux_loader: DataLoader,
     device: str,
-) -> SAESLAttacker:
+) -> SAEUSLAttacker:
     """
-    Train SAE-SL attacker with labeled auxiliary raw samples (x_aux, y_aux) and
+    Train SAE-USL attacker with labeled auxiliary raw samples (x_aux, y_aux) and
     unlabeled victim smashed activations A_front (latent-space MixMatch) for LIA.
     MIA reconstruction is trained on aux labeled only; victim latents NEVER participate in MIA.
     """
@@ -409,7 +409,7 @@ def _compute_multiclass_auc(y_true: np.ndarray, prob: np.ndarray, multi_class: s
 def evaluate_lia_attack(
     cfg,
     priv_cfg: PrivacyConfig,
-    attacker: SAESLAttacker,
+    attacker: SAEUSLAttacker,
     victim_batch: VictimBatch,
     device: str,
 ) -> LIAEval:
@@ -447,7 +447,7 @@ def evaluate_lia_attack(
 def evaluate_mia_attack(
     cfg,
     priv_cfg: PrivacyConfig,
-    attacker: SAESLAttacker,
+    attacker: SAEUSLAttacker,
     victim_batch: VictimBatch,
     device: str,
 ) -> MIAEval:

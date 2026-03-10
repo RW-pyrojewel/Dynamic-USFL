@@ -339,9 +339,9 @@ class MirrorDecoder(nn.Module):
         return x
 
 
-class SAESLAttacker(nn.Module):
+class SAEUSLAttacker(nn.Module):
     """
-    SAE-SL attacker with:
+    SAE-USL attacker with:
       - ShadowEncoder E_theta (train-time only)
       - LabelHead H_phi
       - MirrorDecoder D_psi
