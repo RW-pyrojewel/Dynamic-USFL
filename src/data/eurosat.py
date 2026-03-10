@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 from torch.utils.data import DataLoader
 from torchvision import datasets
 
