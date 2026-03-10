@@ -11,10 +11,13 @@ class MobileNetV2USFLBackbone(USFLBackbone):
     """
     MobileNetV2 backbone that can be logically split into macro blocks.
     """
-    def __init__(self, num_classes: int = 1000, pretrained: bool = False) -> None:
+    def __init__(self, num_classes: int = 1000, pretrained: bool = False, small_input: bool = False) -> None:
         super().__init__()
 
         base = models.mobilenet_v2(pretrained=pretrained)
+        
+        if small_input:
+            base.features[0][0].stride = (1, 1)
 
         features = list(base.features.children())
         # 原始 MobileNet 在 classifier 前有全局平均池化与展平操作，

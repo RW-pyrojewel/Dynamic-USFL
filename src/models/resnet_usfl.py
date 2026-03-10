@@ -11,10 +11,20 @@ class ResNet18USFLBackbone(USFLBackbone):
     """
     ResNet-18 backbone that can be logically split into macro blocks.
     """
-    def __init__(self, num_classes: int = 1000, pretrained: bool = False) -> None:
+    def __init__(self, num_classes: int = 1000, pretrained: bool = False, small_input: bool = False) -> None:
         super().__init__()
 
         base = models.resnet18(pretrained=pretrained)
+        
+        if small_input:
+            base.conv1 = nn.Conv2d(
+                3, 64,
+                kernel_size=3,
+                stride=1,
+                padding=1,
+                bias=False,
+            )
+            base.maxpool = nn.Identity()
 
         conv1_block = nn.Sequential(base.conv1, base.bn1, base.relu, base.maxpool)
         layer1 = base.layer1
