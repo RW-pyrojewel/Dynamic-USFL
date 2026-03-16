@@ -93,6 +93,7 @@ privacy:
     batch_size: 64
     max_samples: 10000          # CIFAR-10 train pool is 50k; aux is 10k under r_aux=0.2
     store_x: true               # MIA needs original x
+    store_grad_A_back: true     # LIA needs grad_A_back.
 
   sae:
     enable_lia: true
@@ -101,7 +102,7 @@ privacy:
     weight_mia: 0.5
     lambda_lia: 1.0
     lambda_mia: 1.0
-    lia_algorithm: mix-match
+    lia_algorithm: zeroshot-grad
     force_retrain: false
     epochs: 20
     lr: 1.0e-3

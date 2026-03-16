@@ -90,9 +90,11 @@ def train_static_usfl(
     if privacy_enabled:
         max_priv_samples = int(getattr(privacy_aux, "max_samples", 5000)) if privacy_aux is not None else 5000
         store_x = bool(getattr(privacy_aux, "store_x", True)) if privacy_aux is not None else True
+        store_grad_A_back = bool(getattr(privacy_aux, "store_grad_A_back", True)) if privacy_aux is not None else True
         priv_A_front_buf: list[torch.Tensor] = []
         priv_y_buf: list[torch.Tensor] = []
         priv_x_buf: Optional[list[torch.Tensor]] = [] if store_x else None
+        priv_grad_A_back_buf: list[torch.Tensor] = [] if store_grad_A_back else None
         priv_num_collected: int = 0
         print(f"[privacy] Sampling enabled: max_samples={max_priv_samples}, store_x={store_x}")
     else:
@@ -101,6 +103,7 @@ def train_static_usfl(
         priv_A_front_buf = None
         priv_y_buf = None
         priv_x_buf = None
+        priv_grad_A_back_buf = None
         priv_num_collected = 0
         print("[privacy] Sampling disabled.")
 
@@ -198,20 +201,22 @@ def train_static_usfl(
                         "loss": loss.item(),
                     }
 
-                    # ------------------------------
-                    # 2.2 采样 A_front / x / y
-                    # ------------------------------
+                    # ------------------------------------------
+                    # 2.2 采样 A_front / x / y / grad_A_back
+                    # ------------------------------------------
                     if (
                         privacy_enabled and cut1 != cut2
                         and priv_num_collected < max_priv_samples
                     ):
                         # StaticSplitUSFL 在 forward_three_segments 内部会更新 last_front_acts
                         A_front = getattr(orchestrator, "last_front_acts", None)
+                        A_back = getattr(orchestrator, "last_back_acts", None)
                         if A_front is not None:
                             with torch.no_grad():
                                 A_front_cpu = A_front.detach().cpu()
                                 y_cpu = y.detach().cpu()
                                 x_cpu = x.detach().cpu() if store_x else None
+                                grad_A_back_cpu = A_back.grad.detach().cpu() if (store_grad_A_back and A_back is not None and A_back.grad is not None) else None
 
                                 batch_size = A_front_cpu.size(0)
                                 remaining = max_priv_samples - priv_num_collected
@@ -223,6 +228,8 @@ def train_static_usfl(
                                         y_cpu = y_cpu[idx]
                                         if store_x:
                                             x_cpu = x_cpu[idx]
+                                        if store_grad_A_back:
+                                            grad_A_back_cpu = grad_A_back_cpu[idx]
                                         taken = remaining
                                     else:
                                         taken = batch_size
@@ -231,6 +238,8 @@ def train_static_usfl(
                                     priv_y_buf.append(y_cpu)
                                     if store_x and priv_x_buf is not None:
                                         priv_x_buf.append(x_cpu)
+                                    if store_grad_A_back and priv_grad_A_back_buf is not None:
+                                        priv_grad_A_back_buf.append(grad_A_back_cpu)
 
                                     priv_num_collected += taken
 
@@ -326,12 +335,16 @@ def train_static_usfl(
         if store_x and priv_x_buf is not None and len(priv_x_buf) > 0:
             x_all = torch.cat(priv_x_buf, dim=0)
             save_dict["x"] = x_all
+        
+        if store_grad_A_back and priv_A_front_buf is not None and len(priv_grad_A_back_buf) > 0:
+            grad_A_back_all = torch.cat(priv_grad_A_back_buf, dim=0)
+            save_dict["grad_A_back"] = grad_A_back_all
 
         priv_path = os.path.join(run_dir, "privacy_samples.pt")
         torch.save(save_dict, priv_path)
         print(
             f"[privacy] Saved {A_front_all.size(0)} samples "
-            f"(store_x={store_x}) to {priv_path}"
+            f"(store_x={store_x}, store_grad_A_back={store_grad_A_back}) to {priv_path}"
         )
     elif privacy_enabled:
         print("[privacy] Enabled but no samples were collected; nothing saved.")
@@ -374,6 +387,7 @@ def train_dynamic_usfl(
     if privacy_enabled:
         max_priv_samples = int(getattr(privacy_aux, "max_samples", 1000)) if privacy_aux is not None else 1000
         store_x = bool(getattr(privacy_aux, "store_x", True)) if privacy_aux is not None else True
+        store_grad_A_back = bool(getattr(privacy_aux, "store_grad_A_back", True)) if privacy_aux is not None else True
         priv_bufs = {}
         priv_num_collected = {}
         print(f"[privacy] Sampling enabled: max_samples={max_priv_samples}, store_x={store_x}")
@@ -521,23 +535,25 @@ def train_dynamic_usfl(
                         "loss": loss.item(),
                     }
 
-                    # ------------------------------
-                    # 2.2 采样 A_front / x / y
-                    # ------------------------------
+                    # ------------------------------------------
+                    # 2.2 采样 A_front / x / y / grad_A_back
+                    # ------------------------------------------
                     if (
                         privacy_enabled and cut1 != cut2
                         and getattr(priv_num_collected, cut_key, 0) < max_priv_samples
                     ):
                         # StaticSplitUSFL 在 forward_three_segments 内部会更新 last_front_acts
                         A_front = getattr(orchestrator, "last_front_acts", None)
+                        A_back = getattr(orchestrator, "last_back_acts", None)
                         if A_front is not None:
                             with torch.no_grad():
                                 A_front_cpu = A_front.detach().cpu()
                                 y_cpu = y.detach().cpu()
                                 x_cpu = x.detach().cpu() if store_x else None
-
+                                grad_A_back_cpu = A_back.grad.detach().cpu() if (store_grad_A_back and A_back is not None and A_back.grad is not None) else None
+    
                                 batch_size = A_front_cpu.size(0)
-                                buf = priv_bufs.setdefault(cut_key, {"A": [], "y": [], "x": []})
+                                buf = priv_bufs.setdefault(cut_key, {"A_front": [], "y": [], "x": [], "grad_A_back": []})
                                 
                                 if not hasattr(priv_num_collected, cut_key):
                                     priv_num_collected[cut_key] = 0
@@ -550,14 +566,18 @@ def train_dynamic_usfl(
                                         y_cpu = y_cpu[idx]
                                         if store_x:
                                             x_cpu = x_cpu[idx]
+                                        if store_grad_A_back:
+                                            grad_A_back_cpu = grad_A_back_cpu[idx]
                                         taken = int(remaining)
                                     else:
                                         taken = int(batch_size)
 
-                                    buf["A"].append(A_front_cpu)
+                                    buf["A_front"].append(A_front_cpu)
                                     buf["y"].append(y_cpu)
                                     if store_x:
                                         buf["x"].append(x_cpu)
+                                    if store_grad_A_back:
+                                        buf["grad_A_back"].append(grad_A_back_cpu)
                                     
                                     priv_num_collected[cut_key] += taken
                                 
@@ -654,20 +674,23 @@ def train_dynamic_usfl(
     if privacy_enabled and isinstance(priv_bufs, dict) and len(priv_bufs) > 0:
         for cut_key, buf in priv_bufs.items():
             try:
-                if not buf["A"]:
+                if not buf["A_front"]:
                     continue
-                A_front_all = torch.cat(buf["A"], dim=0)
+                A_front_all = torch.cat(buf["A_front"], dim=0)
                 y_all = torch.cat(buf["y"], dim=0)
                 save_dict = {"A_front": A_front_all, "y": y_all}
                 if store_x and buf.get("x") and len(buf.get("x")) > 0:
                     x_all = torch.cat(buf["x"], dim=0)
                     save_dict["x"] = x_all
-
+                if store_grad_A_back and buf.get("grad_A_back") and len(buf.get("grad_A_back")) > 0:
+                    grad_A_back_all = torch.cat(buf["grad_A_back"], dim=0)
+                    save_dict["grad_A_back"] = grad_A_back_all
+                
                 cut_dir = os.path.join(run_dir, cut_key)
                 os.makedirs(cut_dir, exist_ok=True)
                 priv_path = os.path.join(cut_dir, "privacy_samples.pt")
                 torch.save(save_dict, priv_path)
-                print(f"[privacy] Saved {A_front_all.size(0)} samples (cut={cut_key}, store_x={store_x}) to {priv_path}")
+                print(f"[privacy] Saved {A_front_all.size(0)} samples (cut={cut_key}, store_x={store_x}, store_grad_A_back={store_grad_A_back}) to {priv_path}")
             except Exception:
                 print(f"[privacy] Failed to save samples for {cut_key}")
     elif privacy_enabled:

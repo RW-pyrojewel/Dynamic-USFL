@@ -13,6 +13,7 @@ from .sae import (
     train_or_load_sae_attacker,
     evaluate_lia_attack,
     evaluate_mia_attack,
+    evaluate_zeroshot_grad_lia,
 )
 
 
@@ -73,7 +74,13 @@ def evaluate_privacy_for_cut(
     lia_auc = None
     lia_acc = None
     if priv_cfg.sae.enable_lia:
-        lia = evaluate_lia_attack(cfg, priv_cfg, attacker, victim_batch, device)
+        if priv_cfg.sae.lia_algorithm == "mix-match":
+            lia = evaluate_lia_attack(cfg, priv_cfg, attacker, victim_batch, device)
+        elif priv_cfg.sae.lia_algorithm == "zeroshot-grad":
+            num_classes = getattr(cfg.data, "num_classes", 10) if hasattr(cfg, "data") else 10
+            lia = evaluate_zeroshot_grad_lia(priv_cfg, victim_batch, num_classes)
+        else:
+            raise NotImplementedError(f"Unsupported LIA algorithm: {priv_cfg.sae.lia_algorithm}")
         P_label = float(lia.P_label)
         lia_auc = float(lia.auc)
         lia_acc = float(lia.acc)
@@ -86,8 +93,8 @@ def evaluate_privacy_for_cut(
         mia_mse = float(mia.mse) if mia.mse == mia.mse else None  # nan check
 
     P_global = combine_privacy_scores(priv_cfg, P_label=P_label, P_sample=P_sample)
-
-    return PrivacyResult(
+    
+    result = PrivacyResult(
         P_label=P_label,
         P_sample=P_sample,
         P_global=P_global,
@@ -95,3 +102,9 @@ def evaluate_privacy_for_cut(
         lia_acc=lia_acc,
         mia_mse=mia_mse,
     )
+    print(f"Privacy evaluation for cut '{cut_key}':")
+    print(f"  P_label: {result.P_label}")
+    print(f"  P_sample: {result.P_sample}")
+    print(f"  P_global: {result.P_global}")
+
+    return result

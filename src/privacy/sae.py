@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Tuple, Iterator
 
 import numpy as np
+from sklearn.cluster import KMeans
+from scipy.optimize import linear_sum_assignment
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Subset, TensorDataset
@@ -483,3 +485,50 @@ def evaluate_mia_attack(
     mse = float(total_se / max(1, total_elems))
     P_sample = mia_quality_to_privacy(mse, priv_cfg)
     return MIAEval(mse=mse, P_sample=P_sample)
+
+
+def evaluate_zeroshot_grad_lia(
+    priv_cfg: PrivacyConfig,
+    victim_batch: VictimBatch,
+    num_classes: int
+) -> LIAEval:
+    """
+    Evaluate a zero-shot LIA using only victim gradients (grad_A_back) at cut-2.
+    Since victim gradients are never used during attacker training, this is a pure "zero-shot" attack without any training or auxiliary data.
+    """
+    if victim_batch.grad_A_back is None:
+        raise ValueError("Zero-Shot LIA requires 'grad_A_back' in VictimBatch.")
+
+    # 1. 展平 cut-2 的梯度
+    # grad_A_back shape: [N, C_back, H_back, W_back] -> [N, -1]
+    grads = victim_batch.grad_A_back.cpu().numpy()
+    N = grads.shape[0]
+    grads_flat = grads.reshape(N, -1)
+
+    # 2. L2 归一化 (使用余弦距离)
+    norms = np.linalg.norm(grads_flat, axis=1, keepdims=True)
+    norms[norms == 0] = 1e-12 
+    grads_norm = grads_flat / norms
+
+    # 3. K-Means 聚类
+    kmeans = KMeans(n_clusters=num_classes, n_init=10, random_state=42)
+    cluster_preds = kmeans.fit_predict(grads_norm)
+
+    # 4. 匈牙利算法：最优映射聚类簇到真实标签
+    y_true = victim_batch.y.cpu().numpy()
+    cost_matrix = np.zeros((num_classes, num_classes))
+    for i in range(num_classes):
+        for j in range(num_classes):
+            cost_matrix[i, j] = -np.sum((cluster_preds == i) & (y_true == j))
+            
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    mapping = {row: col for row, col in zip(row_ind, col_ind)}
+    
+    y_pred_mapped = np.array([mapping[c] for c in cluster_preds])
+
+    # 5. 计算指标
+    acc = float((y_pred_mapped == y_true).mean())
+    auc = acc 
+    P_label = lia_auc_to_privacy(auc, priv_cfg)
+    
+    return LIAEval(auc=auc, acc=acc, P_label=P_label)

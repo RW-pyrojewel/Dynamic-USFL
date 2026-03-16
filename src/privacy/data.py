@@ -12,9 +12,10 @@ from .config import PrivacyConfig
 
 @dataclass
 class VictimBatch:
-    A_front: torch.Tensor             # [N, ...]
-    y: torch.Tensor                   # [N]
-    x: Optional[torch.Tensor] = None  # [N, C, H, W] or None
+    A_front: torch.Tensor                       # [N, ...]
+    y: torch.Tensor                             # [N]
+    x: Optional[torch.Tensor] = None            # [N, C, H, W] or None
+    grad_A_back: Optional[torch.Tensor] = None  # [N, ...]
 
     @property
     def num_samples(self) -> int:
@@ -162,7 +163,10 @@ def load_victim_batch(
     A_front = data["A_front"].to(device)
     y = data["y"].to(device)
     x = data.get("x", None)
+    grad_A_back = data.get("grad_A_back", None)
     if x is not None:
         x = x.to(device)
+    if grad_A_back is not None:
+        grad_A_back = grad_A_back.to(device)
 
-    return VictimBatch(A_front=A_front, y=y, x=x)
+    return VictimBatch(A_front=A_front, y=y, x=x, grad_A_back=grad_A_back)
