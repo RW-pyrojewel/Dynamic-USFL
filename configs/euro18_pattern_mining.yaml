@@ -98,7 +98,7 @@ privacy:
     weight_mia: 0.5
     lambda_lia: 1.0                  # 多任务训练中的 CE 权重
     lambda_mia: 1.0                  # 多任务训练中的重建损失权重
-    lia_algorithm: mix-match
+    lia_algorithm: zeroshot-grad
     force_retrain: false
     epochs: 20
     lr: 1.0e-3
