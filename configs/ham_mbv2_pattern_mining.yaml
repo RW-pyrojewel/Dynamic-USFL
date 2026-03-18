@@ -92,7 +92,7 @@ privacy:
     batch_size: 64
     max_samples: 1602           # HAM10000 train pool is 8012; aux is 1602 under r_aux=0.2
     store_x: true               # MIA needs original x
-    store_grad_A_back: false    # LIA does not use grad_A_back.
+    store_grad_A_back: true     # LIA needs grad_A_back.
 
   sae:
     enable_lia: true

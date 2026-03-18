@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any
 
 import math
 import torch
@@ -62,6 +62,24 @@ class ShadowEncoder(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.front(x)
 
+
+class ShadowTail(nn.Module):
+    """
+    Shadow tail T_theta with the same *architecture* as victim f2 (after cut2),
+    but with independently initialized weights.
+    
+    NOTE:
+      We accept a 'back_module' (nn.Module) as a template, then re-initialize it.
+    """
+    def __init__(self, back_module: nn.Module, reinit: bool = True):
+        super().__init__()
+        self.back = back_module
+        if reinit:
+            _reinit_weights(self.back)
+
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
+        return self.back(z)
+    
 
 class LabelHead(nn.Module):
     """
@@ -343,11 +361,13 @@ class SAEUSLAttacker(nn.Module):
     """
     SAE-USL attacker with:
       - ShadowEncoder E_theta (train-time only)
+      - ShadowTail T_theta (train-time only, optionally used for LIA reconstruction)
       - LabelHead H_phi
       - MirrorDecoder D_psi
 
     Train-time forward:
-      logits, x_hat, z = attacker.forward_aux(x_aux)
+      mix-match: logits, x_hat, z = attacker.forward_aux(x_aux)
+      grad-enhanced: logits, x_hat, z = attacker.forward_aux(x_aux) + optionally attacker.forward_latent(A_front)
 
     Victim-time forward (bypass encoder):
       logits, x_hat = attacker.forward_victim(A_front)
@@ -355,32 +375,28 @@ class SAEUSLAttacker(nn.Module):
     def __init__(
         self,
         encoder: ShadowEncoder,
-        label_head: LabelHead,
         decoder: MirrorDecoder,
+        label_head: Optional[LabelHead] = None,
+        tail: Optional[ShadowTail] = None,
     ):
         super().__init__()
         self.encoder = encoder
-        self.label_head = label_head
         self.decoder = decoder
+        self.label_head = label_head
+        self.tail = tail
 
-    def forward_aux(self, x_aux: torch.Tensor):
-        z = self.encoder(x_aux)
-        logits = self.label_head(z)
-        x_hat = self.decoder(z)
-        return logits, x_hat, z
-
-    def forward_latent(self, z: torch.Tensor):
+    def forward_latent(self, A_front: torch.Tensor, grad_A_back: Optional[torch.Tensor] = None):
         """Train-time forward when smashed activations are already available (no encoder).
 
         This is used for victim unlabeled batches where only A_front (latent Z) is observed.
         """
-        logits = self.label_head(z)
-        x_hat = self.decoder(z)
-        return logits, x_hat
-
-    @torch.no_grad()
-    def forward_victim(self, A_front: torch.Tensor):
-        logits = self.label_head(A_front)
+        if self.label_head is not None:
+            if self.tail is not None and grad_A_back is not None:
+                logits = self.label_head(grad_A_back)
+            else:
+                logits = self.label_head(A_front)
+        else:
+            logits = None
         x_hat = self.decoder(A_front)
         return logits, x_hat
 
@@ -402,3 +418,22 @@ def build_front_template_from_backbone(backbone: USFLBackbone, cut1: int) -> nn.
         front_modules.append(layer)
 
     return nn.Sequential(*front_modules)
+
+
+def build_back_template_from_backbone(backbone: USFLBackbone, cut2: int) -> nn.Module:
+    """
+    Build a *module template* for victim f3, assuming backbone has .layers: nn.ModuleList.
+
+    For your ResNet18USFLBackbone and MobileNetV2USFLBackbone this holds (per your code).
+    """
+    layers = backbone.layers
+    if cut2 < 0 or cut2 >= len(layers):
+        raise ValueError(f"cut2={cut2} out of range for backbone.layers (len={len(layers)})")
+
+    # f2 includes layers[cut2+1..end]
+    back_modules = []
+    for layer in layers[cut2 + 1 :]:
+        _reinit_weights(layer)
+        back_modules.append(layer)
+
+    return nn.Sequential(*back_modules)

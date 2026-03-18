@@ -102,7 +102,7 @@ privacy:
     weight_mia: 0.5
     lambda_lia: 1.0
     lambda_mia: 1.0
-    lia_algorithm: zeroshot-grad
+    lia_algorithm: supervised-grad
     force_retrain: false
     epochs: 20
     lr: 1.0e-3

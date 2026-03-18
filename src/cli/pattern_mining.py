@@ -105,6 +105,7 @@ def main():
                 cut_key=f"cut_{cut1}_{cut2}",
                 cut_dir=os.path.join(output_dir, f"cut_{cut1}_{cut2}"),
                 cut1=cut1,
+                cut2=cut2,
                 backbone_template=backbone,   # 仅用于“切结构”，内部会重置权重避免泄漏
                 device=cfg.training.device,
             ) if cut1 != cut2 else PrivacyResult(P_label=0.0, P_sample=0.0, P_global=0.0)

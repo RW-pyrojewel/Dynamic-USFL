@@ -35,6 +35,7 @@ def evaluate_privacy_for_cut(
     cut_key: str,
     cut_dir: str,
     cut1: int,
+    cut2: int,
     backbone_template: USFLBackbone,
     device: Optional[str] = None,
 ) -> PrivacyResult:
@@ -64,6 +65,7 @@ def evaluate_privacy_for_cut(
         priv_cfg=priv_cfg,
         cut_key=cut_key,
         cut1=cut1,
+        cut2=cut2,
         backbone_template=backbone_template,
         victim_batch=victim_batch,
         aux_loader=aux_loader,
@@ -74,7 +76,7 @@ def evaluate_privacy_for_cut(
     lia_auc = None
     lia_acc = None
     if priv_cfg.sae.enable_lia:
-        if priv_cfg.sae.lia_algorithm == "mix-match":
+        if priv_cfg.sae.lia_algorithm in ("mix-match", "supervised-grad"):
             lia = evaluate_lia_attack(cfg, priv_cfg, attacker, victim_batch, device)
         elif priv_cfg.sae.lia_algorithm == "zeroshot-grad":
             num_classes = getattr(cfg.data, "num_classes", 10) if hasattr(cfg, "data") else 10
@@ -88,7 +90,7 @@ def evaluate_privacy_for_cut(
     P_sample = 0.0
     mia_mse = None
     if priv_cfg.sae.enable_mia:
-        mia = evaluate_mia_attack(cfg, priv_cfg, attacker, victim_batch, device)
+        mia = evaluate_mia_attack(priv_cfg, attacker, victim_batch, device)
         P_sample = float(mia.P_sample)
         mia_mse = float(mia.mse) if mia.mse == mia.mse else None  # nan check
 
